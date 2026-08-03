@@ -1,44 +1,82 @@
 # hoa-cli
 
-`hoa-cli` 是一个维护者本地运行的哈尔滨工业大学（本部）本科执行教学计划采集器。它通过教务系统 HTTP 接口发现指定年级的院系、专业和课程，并生成 `hoa-major-data` 继续使用的 `major_mapping.json` 与 `plans/*.toml` 文件。
+这是给维护者用的命令行工具，不是给普通用户安装的应用。它从哈工大本部教务系统读取指定年级的执行教学计划，并更新 `hoa-major-data` 仓库中的两类文件：
 
-## 信任边界
+- `major_mapping.json`：年级、学院和专业的目录；
+- `plans/*.toml`：每个专业的课程列表。
 
-采集需要维护者在本地通过代理访问教务系统，并手工提供一次性 Cookie。CLI 不自动登录、不保存用户名密码、不运行浏览器自动化；`.env` 已被忽略，Cookie 不得提交到仓库。公共 CI 只运行脱敏 fixture 测试和构建，不访问教务系统。
+它不会自动登录教务系统，也不会提交任何数据。正确的流程是：本地抓取 → 查看数据 diff → 人工确认后提交 `hoa-major-data`。
 
-## 本地采集
+## 更新培养方案数据
 
-```powershell
-Copy-Item .env.example .env
-# 在 .env 中填写 HIT_JW_COOKIE，并设置所需的本地代理。
-hoa crawl --years 2024 2025
-git -C D:\dev\HOAHRB\hoa-major-data diff -- major_mapping.json plans
+抓取前需要两样本地信息：已登录教务系统会话的 Cookie，以及能访问教务系统的代理。二者都只保存在本机，绝不能提交。
+
+1. 在 `hoa-cli` 仓库创建本地配置：
+
+   ```powershell
+   Copy-Item .env.example .env
+   ```
+
+2. 编辑 `.env`：把浏览器中取得的 Cookie 填到 `HIT_JW_COOKIE`，代理地址填到 `HTTP_PROXY` 和 `HTTPS_PROXY`。其余值通常不用改。
+
+3. 在 `hoa-cli` 仓库运行抓取，并明确指定要更新的数据仓库：
+
+   ```powershell
+   uv run hoa crawl --years 2024 2025 --data-dir ..\hoa-major-data
+   ```
+
+4. 审查生成的数据：
+
+   ```powershell
+   git -C ..\hoa-major-data diff -- major_mapping.json plans
+   ```
+
+`--years` 可以填写一个或多个年级。`--data-dir` 可省略；省略时工具会把当前工作目录当作 `hoa-major-data`。因此现有 CI 若在 `hoa-major-data` 目录中运行 `hoa crawl --years ...`，仍会写入原来的位置。
+
+抓取只会替换指定年级的 `major_mapping.json` 条目和计划文件。它不会改动人工维护的 `lookup_table.toml`、`grades_summary.json`、`shared_categories.toml`。
+
+## 修正专业名称或跳过记录
+
+教务系统偶尔会漏掉班型名称，或返回不应发布的记录。这些例外写在 `src/hoa_cli/major_rules.toml`，不要写进 Python 代码。
+
+每条规则必须同时写 `year` 和 `code`，所以只会影响对应年级的对应专业。例如：
+
+```toml
+[[rules]]
+year = 2024
+code = "09331"
+name = "土木工程（土木菁华班）"
+reason = "教务系统未在名称中显示班型"
+
+[[rules]]
+year = 2024
+code = "01182L"
+publish = false
+reason = "与 01182 的方案重复，且来源没有独立名称"
 ```
 
-在 `hoa-major-data` 目录中运行上述命令时，数据默认写入当前工作目录；`--data-dir <目录>` 只用于临时或跨目录运行。采集完成后，维护者应审查新增、修改和删除的专业及课程，再提交 `hoa-major-data` 数据。采集器不会覆盖 `lookup_table.toml`、`grades_summary.json` 或 `shared_categories.toml`。
+- `year`：一个年级，或多个年级组成的列表；
+- `code`：教务系统返回的专业代码；
+- `name`：仅在需要覆盖教务系统名称时填写；
+- `publish = false`：不生成这条记录；
+- `reason`：写明判断依据，便于后续维护。
 
-## 专业规则主文件
-
-当教务系统漏掉专业方向、班型名称，或确认某条来源记录不应发布时，在 `src/hoa_cli/major_rules.toml` 增加一条规则。规则按 `year` 和 `code` 精确匹配，因此不会影响同一专业代码的其他年级。
-
-- `year`：必填。可填写一个年级，例如 `2024`；同一规则需要用于多个年级时，写成列表，例如 `[2024, 2025]`。
-- `code`：教务系统返回的专业代码。
-- `publish`：是否生成该专业的数据；不填写时默认为生成，填 `false` 才会跳过。
-- `name`：只有教务系统漏写或写错专业名称时才填写，用于替换来源名称。
-- `reason`：说明作出这项人工修正的依据，方便日后核对。
-
-修改规则后至少运行：
+改完规则后，至少运行：
 
 ```powershell
 uv run pytest tests/unit/test_discovery.py -q
 uv run ruff check src tests
 ```
 
-`grades_summary.json` 仍是 `hoa-major-data` 中人工维护的数据。需要从 `repos-management` 的源文件重建时，在 `hoa-major-data` 目录中运行：
+## 更新成绩构成
+
+`grades_summary.json` 属于 `hoa-major-data`，不是 CLI 自己的数据。需要从 `repos-management` 的源文件重新生成它时，进入 `hoa-major-data` 目录后运行：
 
 ```powershell
 python ..\hoa-cli\scripts\update_grades_summary.py
 ```
+
+这个脚本默认把结果写到当前目录；需要写到其他目录时，再追加 `--data-dir <目录>`。
 
 ## 开发验证
 
