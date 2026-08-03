@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from hoa_cli import app
+from hoa_cli.config import DEFAULT_DATA_DIR
 from hoa_cli.errors import (
     AuthenticationError,
     ConfigError,
@@ -15,14 +16,14 @@ from hoa_cli.errors import (
 from hoa_cli.writer import PublicationSummary
 
 
-def test_cli_requires_years_and_defaults_data_directory_to_current_working_directory() -> None:
+def test_cli_requires_years_and_defaults_data_directory_to_original_location() -> None:
     parser = app.build_parser()
     with pytest.raises(SystemExit):
         parser.parse_args(["crawl"])
     with pytest.raises(SystemExit):
         parser.parse_args(["crawl", "--years", "1999", "--data-dir", "out"])
     args = parser.parse_args(["crawl", "--years", "2025"])
-    assert args.data_dir == Path(".")
+    assert args.data_dir == DEFAULT_DATA_DIR
 
 
 def test_cli_accepts_optional_benchmark_flag() -> None:

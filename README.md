@@ -31,7 +31,7 @@
    git -C ..\hoa-major-data diff -- major_mapping.json plans
    ```
 
-`--years` 可以填写一个或多个年级。`--data-dir` 可省略；省略时工具会把当前工作目录当作 `hoa-major-data`。因此现有 CI 若在 `hoa-major-data` 目录中运行 `hoa crawl --years ...`，仍会写入原来的位置。
+`--years` 可以填写一个或多个年级。为保持原 HITSZ CLI 的行为，不写 `--data-dir` 时，工具会写入 `src/hoa_cli/data`。更新 `hoa-major-data` 时应像上例一样明确填写 `--data-dir ..\hoa-major-data`。
 
 抓取只会替换指定年级的 `major_mapping.json` 条目和计划文件。它不会改动人工维护的 `lookup_table.toml`、`grades_summary.json`、`shared_categories.toml`。
 
@@ -70,13 +70,13 @@ uv run ruff check src tests
 
 ## 更新成绩构成
 
-`grades_summary.json` 属于 `hoa-major-data`，不是 CLI 自己的数据。需要从 `repos-management` 的源文件重新生成它时，进入 `hoa-major-data` 目录后运行：
+`grades_summary.json` 属于 `hoa-major-data`，不是 CLI 自己的数据。需要从 `repos-management` 的源文件重新生成它时，显式指定数据仓库：
 
 ```powershell
-python ..\hoa-cli\scripts\update_grades_summary.py
+python scripts\update_grades_summary.py --data-dir ..\hoa-major-data
 ```
 
-这个脚本默认把结果写到当前目录；需要写到其他目录时，再追加 `--data-dir <目录>`。
+不写 `--data-dir` 时，脚本同样会按原 HITSZ CLI 的位置写入 `src/hoa_cli/data`。
 
 ## 开发验证
 
