@@ -125,8 +125,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument(
         "--data-dir",
         type=Path,
-        required=True,
-        help="hoa-major-data 目录；输出写入其中的 grades_summary.json",
+        default=Path("."),
+        help="hoa-major-data 目录；默认当前工作目录，输出写入其中的 grades_summary.json",
     )
     args = parser.parse_args(argv)
 

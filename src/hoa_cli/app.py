@@ -38,7 +38,12 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     crawl_parser = subparsers.add_parser("crawl", help="crawl HIT execution teaching plans")
     crawl_parser.add_argument("--years", nargs="+", required=True, type=_year)
-    crawl_parser.add_argument("--data-dir", required=True, type=Path)
+    crawl_parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=Path("."),
+        help="data directory (defaults to the current working directory)",
+    )
     crawl_parser.add_argument(
         "--benchmark", action="store_true", help="print total local crawl duration"
     )
