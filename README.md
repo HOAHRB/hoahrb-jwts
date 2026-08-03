@@ -34,6 +34,12 @@ uv run pytest tests/unit/test_discovery.py -q
 uv run ruff check src tests
 ```
 
+`grades_summary.json` 仍是 `hoa-major-data` 中人工维护的数据。需要从 `repos-management` 的源文件重建时，显式指定目标目录：
+
+```powershell
+python scripts/update_grades_summary.py --data-dir D:\dev\HOAHRB\hoa-major-data
+```
+
 ## 开发验证
 
 ```powershell
