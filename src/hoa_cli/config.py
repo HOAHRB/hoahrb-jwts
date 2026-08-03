@@ -1,97 +1,60 @@
-"""
-统一配置管理模块
+"""Runtime configuration for the maintainer-run HIT crawler."""
 
-从 .env 文件或环境变量中读取敏感配置信息。
-"""
-
-import logging
+import math
 import os
-from pathlib import Path
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger("hoa_cli")
-
-# 尝试加载 python-dotenv（如果已安装）
-try:
-    from dotenv import load_dotenv
-
-    # 加载 .env 文件
-    env_path = Path(__file__).parent.parent.parent / ".env"
-    load_dotenv(env_path)
-except ImportError:
-    # 如果没有安装 python-dotenv，仅使用环境变量
-    pass
+from .errors import ConfigError
 
 
-def get_env(key: str, default: str = "") -> str:
-    """获取环境变量，如果不存在则返回默认值"""
-    return os.getenv(key, default)
+@dataclass(frozen=True)
+class Settings:
+    """Immutable settings loaded from an explicitly supplied environment."""
 
+    base_url: str
+    cookie: str = field(repr=False)
+    proxies: dict[str, str]
+    timeout_seconds: float
+    delay_seconds: float
+    max_retries: int
 
-# -------------------------------------------------------------------------------------------------
-# Cookie 配置
-# -------------------------------------------------------------------------------------------------
+    @classmethod
+    def from_env(cls, environ: Mapping[str, str] = os.environ) -> "Settings":
+        cookie = environ.get("HIT_JW_COOKIE", "").strip()
+        if not cookie:
+            raise ConfigError("HIT_JW_COOKIE is required")
 
-JW_COOKIE = get_env("JW_COOKIE", "")
+        base_url = environ.get("HIT_JW_BASE_URL", "http://jwts.hit.edu.cn").strip().rstrip("/")
+        if not base_url:
+            raise ConfigError("HIT_JW_BASE_URL must not be empty")
 
-# -------------------------------------------------------------------------------------------------
-# 代理配置
-# -------------------------------------------------------------------------------------------------
+        try:
+            timeout_seconds = float(environ.get("HIT_JW_TIMEOUT_SECONDS", "20"))
+            delay_seconds = float(environ.get("HIT_JW_DELAY_SECONDS", "0.2"))
+            max_retries = int(environ.get("HIT_JW_MAX_RETRIES", "3"))
+        except ValueError as exc:
+            raise ConfigError(
+                "HIT_JW_TIMEOUT_SECONDS, HIT_JW_DELAY_SECONDS, and HIT_JW_MAX_RETRIES must be numeric"
+            ) from exc
 
-HTTP_PROXY = get_env("HTTP_PROXY", "")
-HTTPS_PROXY = get_env("HTTPS_PROXY", "")
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise ConfigError("HIT_JW_TIMEOUT_SECONDS must be positive")
+        if not math.isfinite(delay_seconds) or delay_seconds < 0:
+            raise ConfigError("HIT_JW_DELAY_SECONDS must not be negative")
+        if max_retries < 0:
+            raise ConfigError("HIT_JW_MAX_RETRIES must not be negative")
 
-PROXIES = {}
-if HTTP_PROXY:
-    PROXIES["http"] = HTTP_PROXY
-if HTTPS_PROXY:
-    PROXIES["https"] = HTTPS_PROXY
-
-# -------------------------------------------------------------------------------------------------
-# 请求头配置
-# -------------------------------------------------------------------------------------------------
-
-# 通用请求头（表单类型）
-HEADERS_FORM = {
-    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-    "Cookie": JW_COOKIE,
-    "RoleCode": "01",
-    "X-Requested-With": "XMLHttpRequest",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-}
-
-# 通用请求头（JSON 类型）
-HEADERS_JSON = {
-    "Content-Type": "application/json",
-    "Cookie": JW_COOKIE,
-    "RoleCode": "01",
-    "X-Requested-With": "XMLHttpRequest",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-}
-
-# -------------------------------------------------------------------------------------------------
-# API URLs
-# -------------------------------------------------------------------------------------------------
-
-# 培养方案查询
-FAH_URL = "https://jw.hitsz.edu.cn/faxq/query?sf_request_type=ajax"
-
-# 课程列表查询
-COURSE_URL = "https://jw.hitsz.edu.cn/Njpyfakc/queryList?sf_request_type=ajax"
-
-# 大类专业列表查询
-MAJOR_LIST_URL = "https://jw.hitsz.edu.cn/xjgl/dlfzysq/querydlzyd?sf_request_type=ajax"
-
-
-# -------------------------------------------------------------------------------------------------
-# 路径配置
-# -------------------------------------------------------------------------------------------------
-
-# 默认数据目录
-DEFAULT_DATA_DIR = Path(__file__).parent / "data"
-
-# 子目录：专业培养方案 TOML 集合
-PLANS_SUBDIR = "plans"
+        proxies = {
+            scheme: value
+            for scheme, key in (("http", "HTTP_PROXY"), ("https", "HTTPS_PROXY"))
+            if (value := environ.get(key, "").strip())
+        }
+        return cls(
+            base_url=base_url,
+            cookie=cookie,
+            proxies=proxies,
+            timeout_seconds=timeout_seconds,
+            delay_seconds=delay_seconds,
+            max_retries=max_retries,
+        )

@@ -1,47 +1,42 @@
 # hoa-cli
 
-[![Build and Verify](https://github.com/HITSZ-OpenAuto/hoa-cli/actions/workflows/build.yml/badge.svg)](https://github.com/HITSZ-OpenAuto/hoa-cli/actions/workflows/build.yml)
-[![Python Version](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+`hoa-cli` 是一个维护者本地运行的哈尔滨工业大学（本部）本科执行教学计划采集器。它通过教务系统 HTTP 接口发现指定年级的院系、专业和课程，并生成 `hoa-major-data` 继续使用的 `major_mapping.json` 与 `plans/*.toml` 文件。
 
-本项目用于从 **哈尔滨工业大学（深圳）教务系统** 抓取各年级、各专业的培养方案课程数据，并将其规范化后保存为 TOML 格式文件，便于后续查询与分析。
+## 信任边界
 
-## 安装
+采集需要维护者在本地通过代理访问教务系统，并手工提供一次性 Cookie。CLI 不自动登录、不保存用户名密码、不运行浏览器自动化；`.env` 已被忽略，Cookie 不得提交到仓库。公共 CI 只运行脱敏 fixture 测试和构建，不访问教务系统。
 
-直接安装 CLI 工具到系统中：
+## 本地采集
 
-```sh
-uv tool install git+https://github.com/HITSZ-OpenAuto/hoa-cli.git
+```powershell
+Copy-Item .env.example .env
+# 在 .env 中填写 HIT_JW_COOKIE，并设置所需的本地代理。
+uv run hoa crawl --years 2024 2025 --data-dir D:\dev\HOAHRB\hoa-major-data
+git -C D:\dev\HOAHRB\hoa-major-data diff -- major_mapping.json plans
 ```
 
-## 快速开始
+`--years` 和 `--data-dir` 都必须显式提供。采集完成后，维护者应审查新增、修改和删除的专业及课程，再提交 `hoa-major-data` 数据。采集器不会覆盖 `lookup_table.toml`、`grades_summary.json` 或 `shared_categories.toml`。
 
-```sh
-# 设置环境
-make prepare
+## 专业规则主文件
 
-# 配置 cookie
-cp .env.example .env
-# 编辑 .env 填入 JW_COOKIE
+当教务系统漏掉专业方向、班型名称，或确认某条来源记录不应发布时，在 `src/hoa_cli/major_rules.toml` 增加一条规则。规则按 `year` 和 `code` 精确匹配，因此不会影响同一专业代码的其他年级。
 
-# 抓取培养方案与课程数据
-uv run hoa crawl
+- `year`：必填。可填写一个年级，例如 `2024`；同一规则需要用于多个年级时，写成列表，例如 `[2024, 2025]`。
+- `code`：教务系统返回的专业代码。
+- `publish`：是否生成该专业的数据；不填写时默认为生成，填 `false` 才会跳过。
+- `name`：只有教务系统漏写或写错专业名称时才填写，用于替换来源名称。
+- `reason`：说明作出这项人工修正的依据，方便日后核对。
 
-# 列出所有已抓取的培养方案
-uv run hoa plans
+修改规则后至少运行：
 
-# 列出特定培养方案的所有课程
-uv run hoa courses <plan_id>
-
-# 获取培养方案中特定课程的详细信息
-uv run hoa info <plan_id> <course_code>
+```powershell
+uv run pytest tests/unit/test_discovery.py -q
+uv run ruff check src tests
 ```
 
-## GitHub Action
+## 开发验证
 
-```yaml
-steps:
-  - uses: actions/checkout@v6
-  - uses: HITSZ-OpenAuto/hoa-cli@main
-  - run: hoa plans
+```powershell
+make check
+make build
 ```
