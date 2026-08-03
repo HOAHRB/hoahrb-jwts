@@ -11,7 +11,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from .client import TeachingSystemClient
-from .config import Settings
+from .config import DEFAULT_DATA_DIR, Settings
 from .discovery import discover_plans
 from .errors import (
     AuthenticationError,
@@ -41,8 +41,8 @@ def build_parser() -> argparse.ArgumentParser:
     crawl_parser.add_argument(
         "--data-dir",
         type=Path,
-        default=Path("."),
-        help="data directory (defaults to the current working directory)",
+        default=DEFAULT_DATA_DIR,
+        help="data directory (defaults to the bundled data directory)",
     )
     crawl_parser.add_argument(
         "--benchmark", action="store_true", help="print total local crawl duration"
