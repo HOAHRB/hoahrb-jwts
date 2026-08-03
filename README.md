@@ -11,11 +11,11 @@
 ```powershell
 Copy-Item .env.example .env
 # 在 .env 中填写 HIT_JW_COOKIE，并设置所需的本地代理。
-uv run hoa crawl --years 2024 2025 --data-dir D:\dev\HOAHRB\hoa-major-data
+hoa crawl --years 2024 2025
 git -C D:\dev\HOAHRB\hoa-major-data diff -- major_mapping.json plans
 ```
 
-`--years` 和 `--data-dir` 都必须显式提供。采集完成后，维护者应审查新增、修改和删除的专业及课程，再提交 `hoa-major-data` 数据。采集器不会覆盖 `lookup_table.toml`、`grades_summary.json` 或 `shared_categories.toml`。
+在 `hoa-major-data` 目录中运行上述命令时，数据默认写入当前工作目录；`--data-dir <目录>` 只用于临时或跨目录运行。采集完成后，维护者应审查新增、修改和删除的专业及课程，再提交 `hoa-major-data` 数据。采集器不会覆盖 `lookup_table.toml`、`grades_summary.json` 或 `shared_categories.toml`。
 
 ## 专业规则主文件
 
@@ -34,10 +34,10 @@ uv run pytest tests/unit/test_discovery.py -q
 uv run ruff check src tests
 ```
 
-`grades_summary.json` 仍是 `hoa-major-data` 中人工维护的数据。需要从 `repos-management` 的源文件重建时，显式指定目标目录：
+`grades_summary.json` 仍是 `hoa-major-data` 中人工维护的数据。需要从 `repos-management` 的源文件重建时，在 `hoa-major-data` 目录中运行：
 
 ```powershell
-python scripts/update_grades_summary.py --data-dir D:\dev\HOAHRB\hoa-major-data
+python ..\hoa-cli\scripts\update_grades_summary.py
 ```
 
 ## 开发验证
