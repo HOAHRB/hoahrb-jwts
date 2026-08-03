@@ -16,18 +16,18 @@ Notes:
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import tomllib
 import urllib.request
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 SOURCE_URL = (
     "https://raw.githubusercontent.com/HITSZ-OpenAuto/repos-management/main/grades_summary.toml"
 )
-OUT_PATH = Path(__file__).resolve().parents[1] / "src/hoa_cli/data/grades_summary.json"
-
 PERCENT_RE = re.compile(r"(\d+%)")
 
 
@@ -118,7 +118,18 @@ def extract_grade_strings(obj: Any) -> list[str]:
     return out
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        description="将 repos-management 的成绩构成转换为 hoa-major-data 使用的 JSON"
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        required=True,
+        help="hoa-major-data 目录；输出写入其中的 grades_summary.json",
+    )
+    args = parser.parse_args(argv)
+
     raw_bytes = urllib.request.urlopen(SOURCE_URL).read()
     toml_data = tomllib.loads(raw_bytes.decode("utf-8"))
 
@@ -163,8 +174,9 @@ def main() -> None:
 
     out = out_grades
 
-    OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    OUT_PATH.write_text(
+    output_path = args.data_dir / "grades_summary.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
         json.dumps(out, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
