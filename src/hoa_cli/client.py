@@ -74,7 +74,7 @@ class TeachingSystemClient:
             self._last_request_succeeded = False
             raise TransportError(f"request failed during {path}") from exc
 
-        if response.status_code in {401, 403} or 300 <= response.status_code < 400:
+        if response.status_code in {401, 403}:
             self._last_request_succeeded = False
             raise AuthenticationError(f"authentication failed during {path}")
         if response.status_code >= 400:

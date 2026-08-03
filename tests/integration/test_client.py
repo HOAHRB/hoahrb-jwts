@@ -75,14 +75,30 @@ def test_refresh_cookie_rejects_login_page_even_with_cookie_update(settings) -> 
 
 
 @responses.activate
-def test_refresh_cookie_rejects_redirect(settings) -> None:
+def test_refresh_cookie_accepts_redirect_with_cookie_update(settings) -> None:
     responses.get(
         "http://jwts.hit.edu.cn/loginCAS",
         status=302,
-        headers={"Location": "http://jwts.hit.edu.cn/auth/login"},
+        headers={
+            "Location": "http://jwts.hit.edu.cn/zxjh/queryZxkc",
+            "Set-Cookie": "JSESSIONID=redirect-refreshed; Path=/; HttpOnly",
+        },
     )
 
-    with pytest.raises(AuthenticationError, match="authentication failed"):
+    refreshed_cookie = TeachingSystemClient(settings).refresh_cookie()
+
+    assert refreshed_cookie == "JSESSIONID=redirect-refreshed"
+
+
+@responses.activate
+def test_refresh_cookie_rejects_redirect_without_cookie_update(settings) -> None:
+    responses.get(
+        "http://jwts.hit.edu.cn/loginCAS",
+        status=302,
+        headers={"Location": "http://jwts.hit.edu.cn/zxjh/queryZxkc"},
+    )
+
+    with pytest.raises(AuthenticationError, match="no usable Cookie update"):
         TeachingSystemClient(settings).refresh_cookie()
 
 
@@ -135,7 +151,7 @@ def test_get_catalog_rejects_redirect_without_following_or_exposing_secrets(sett
 
 
 @responses.activate
-def test_get_majors_rejects_redirect_without_parsing_body(settings) -> None:
+def test_get_majors_accepts_redirect_without_following_it(settings) -> None:
     from hoa_cli.models import Department
 
     responses.post(
@@ -150,10 +166,10 @@ def test_get_majors_rejects_redirect_without_parsing_body(settings) -> None:
         status=200,
     )
 
-    with pytest.raises(AuthenticationError):
-        TeachingSystemClient(settings).get_majors("2025", Department("35", "人文社科学部"))
+    majors = TeachingSystemClient(settings).get_majors("2025", Department("35", "人文社科学部"))
 
     assert len(responses.calls) == 1
+    assert [major.code for major in majors] == ["35158"]
 
 
 @responses.activate
