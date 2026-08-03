@@ -35,6 +35,8 @@
 
 `--years` 可以填写一个或多个年级。为保持原 HITSZ CLI 的行为，不写 `--data-dir` 时，工具会写入 `src/hoa_cli/data`。更新 `hoa-major-data` 时应像上例一样明确填写 `--data-dir ..\hoa-major-data`。
 
+默认情况下，抓取开始前会请求教务系统的 CAS 地址以刷新现有 Cookie；如果 Cookie 来自 `.env`，刷新成功后会原样保留其他配置和注释，只更新其中的 `HIT_JW_COOKIE`。若需要排查会话问题、坚持使用填写的 Cookie，可加 `--no-refresh-cookie` 跳过这一步。工具不会自动登录，也不会把 Cookie 写入版本库。
+
 抓取只会替换指定年级的 `major_mapping.json` 条目和计划文件。它不会改动人工维护的 `lookup_table.toml`、`grades_summary.json`、`shared_categories.toml`。
 
 ## 修正专业名称或跳过记录

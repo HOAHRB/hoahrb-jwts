@@ -1,6 +1,6 @@
 import pytest
 
-from hoa_cli.config import Settings
+from hoa_cli.config import CookieSource, Settings
 from hoa_cli.errors import ConfigError
 
 
@@ -28,6 +28,35 @@ def test_settings_parse_proxy_and_numeric_values() -> None:
     assert settings.timeout_seconds == 12
     assert settings.delay_seconds == 0.25
     assert "JSESSIONID=sanitized" not in repr(settings)
+
+
+def test_settings_marks_process_environment_cookie_source() -> None:
+    settings = Settings.from_env({"HIT_JW_COOKIE": "JSESSIONID=sanitized"})
+
+    assert settings.cookie_source is CookieSource.PROCESS_ENV
+    assert settings.cookie_file is None
+
+
+def test_settings_loads_cookie_from_dotenv_when_process_environment_has_none(tmp_path) -> None:
+    dotenv_path = tmp_path / ".env"
+    dotenv_path.write_text("HIT_JW_COOKIE=JSESSIONID=from-dotenv\n", encoding="utf-8")
+
+    settings = Settings.from_sources({}, dotenv_path)
+
+    assert settings.cookie == "JSESSIONID=from-dotenv"
+    assert settings.cookie_source is CookieSource.DOTENV
+    assert settings.cookie_file == dotenv_path
+
+
+def test_settings_prefers_process_environment_cookie_over_dotenv(tmp_path) -> None:
+    dotenv_path = tmp_path / ".env"
+    dotenv_path.write_text("HIT_JW_COOKIE=JSESSIONID=from-dotenv\n", encoding="utf-8")
+
+    settings = Settings.from_sources({"HIT_JW_COOKIE": "JSESSIONID=from-process"}, dotenv_path)
+
+    assert settings.cookie == "JSESSIONID=from-process"
+    assert settings.cookie_source is CookieSource.PROCESS_ENV
+    assert settings.cookie_file is None
 
 
 @pytest.mark.parametrize(

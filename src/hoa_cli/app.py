@@ -11,7 +11,8 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from .client import TeachingSystemClient
-from .config import DEFAULT_DATA_DIR, Settings
+from .config import DEFAULT_DATA_DIR, CookieSource, Settings
+from .cookie_store import persist_dotenv_cookie
 from .discovery import discover_plans
 from .errors import (
     AuthenticationError,
@@ -45,33 +46,38 @@ def build_parser() -> argparse.ArgumentParser:
         help="data directory (defaults to the bundled data directory)",
     )
     crawl_parser.add_argument(
+        "--no-refresh-cookie",
+        action="store_true",
+        help="use HIT_JW_COOKIE unchanged instead of refreshing it through CAS",
+    )
+    crawl_parser.add_argument(
         "--benchmark", action="store_true", help="print total local crawl duration"
     )
     return parser
 
 
-def _environment_with_dotenv(environ: Mapping[str, str]) -> dict[str, str]:
-    values = dict(environ)
-    try:
-        from dotenv import dotenv_values
-
-        env_path = Path(__file__).resolve().parents[2] / ".env"
-        for key, value in dotenv_values(env_path).items():
-            if value is not None and key not in values:
-                values[key] = value
-    except (ImportError, OSError):
-        pass
-    return values
+def _project_dotenv_path() -> Path:
+    return Path(__file__).resolve().parents[2] / ".env"
 
 
 def _print_progress(message: str) -> None:
     print(f"progress: {message}", file=sys.stderr, flush=True)
 
 
-def run_crawl(args: argparse.Namespace, environ: Mapping[str, str]) -> PublicationSummary:
+def run_crawl(
+    args: argparse.Namespace,
+    environ: Mapping[str, str],
+    dotenv_path: Path | None = None,
+) -> PublicationSummary:
     years = tuple(sorted(set(args.years)))
-    settings = Settings.from_env(_environment_with_dotenv(environ))
+    settings = Settings.from_sources(environ, dotenv_path or _project_dotenv_path())
     gateway = TeachingSystemClient(settings, on_progress=_print_progress)
+    if not args.no_refresh_cookie:
+        refreshed_cookie = gateway.refresh_cookie()
+        if settings.cookie_source is CookieSource.DOTENV:
+            if settings.cookie_file is None:
+                raise ConfigError(".env Cookie source has no persistence path")
+            persist_dotenv_cookie(settings.cookie_file, refreshed_cookie)
     discovered = discover_plans(gateway, years)
     normalized = tuple(normalize_plan(plan) for plan in discovered)
     return publish_plans(Path(args.data_dir), normalized, set(years))

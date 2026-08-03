@@ -5,6 +5,7 @@ import requests
 import responses
 
 from hoa_cli.client import TeachingSystemClient
+from hoa_cli.config import Settings
 from hoa_cli.errors import AuthenticationError, TransportError
 from hoa_cli.models import Major
 from tests.helpers import load_fixture
@@ -21,6 +22,83 @@ def test_get_catalog_sends_cookie_without_logging_it(settings, caplog) -> None:
     assert catalog.years == ("2025", "2024")
     assert responses.calls[0].request.headers["Cookie"] == "JSESSIONID=sanitized"
     assert "JSESSIONID=sanitized" not in caplog.text
+
+
+@responses.activate
+def test_refresh_cookie_merges_update_and_uses_it_for_later_requests() -> None:
+    settings = Settings.from_env(
+        {
+            "HIT_JW_COOKIE": "JSESSIONID=old; CAMPUS=preserved",
+            "HIT_JW_DELAY_SECONDS": "0",
+            "HIT_JW_MAX_RETRIES": "0",
+        }
+    )
+    responses.get(
+        "http://jwts.hit.edu.cn/loginCAS",
+        body="refreshed session",
+        status=200,
+        headers={"Set-Cookie": "JSESSIONID=new; Path=/; HttpOnly"},
+    )
+    responses.get(
+        "http://jwts.hit.edu.cn/zxjh/queryZxkc",
+        body=load_fixture("catalog_authenticated.html"),
+        status=200,
+    )
+    client = TeachingSystemClient(settings)
+
+    refreshed_cookie = client.refresh_cookie()
+    client.get_catalog()
+
+    assert refreshed_cookie == "JSESSIONID=new; CAMPUS=preserved"
+    assert responses.calls[1].request.headers["Cookie"] == refreshed_cookie
+
+
+@responses.activate
+def test_refresh_cookie_rejects_missing_cookie_update(settings) -> None:
+    responses.get("http://jwts.hit.edu.cn/loginCAS", body="session page", status=200)
+
+    with pytest.raises(AuthenticationError, match="no usable Cookie update"):
+        TeachingSystemClient(settings).refresh_cookie()
+
+
+@responses.activate
+def test_refresh_cookie_rejects_login_page_even_with_cookie_update(settings) -> None:
+    responses.get(
+        "http://jwts.hit.edu.cn/loginCAS",
+        body="<title>统一身份认证</title>",
+        status=200,
+        headers={"Set-Cookie": "JSESSIONID=not-authenticated; Path=/"},
+    )
+
+    with pytest.raises(AuthenticationError, match="login page"):
+        TeachingSystemClient(settings).refresh_cookie()
+
+
+@responses.activate
+def test_refresh_cookie_rejects_redirect(settings) -> None:
+    responses.get(
+        "http://jwts.hit.edu.cn/loginCAS",
+        status=302,
+        headers={"Location": "http://jwts.hit.edu.cn/auth/login"},
+    )
+
+    with pytest.raises(AuthenticationError, match="authentication failed"):
+        TeachingSystemClient(settings).refresh_cookie()
+
+
+@responses.activate
+def test_refresh_cookie_maps_transport_failure_to_authentication_error(settings) -> None:
+    def timeout_callback(_request):
+        raise requests.Timeout("timed out")
+
+    responses.add_callback(
+        responses.GET,
+        "http://jwts.hit.edu.cn/loginCAS",
+        callback=timeout_callback,
+    )
+
+    with pytest.raises(AuthenticationError, match="refresh request failed"):
+        TeachingSystemClient(settings).refresh_cookie()
 
 
 @responses.activate
