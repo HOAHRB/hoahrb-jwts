@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from http.cookies import SimpleCookie
 from typing import Any
 
 import requests
@@ -87,6 +88,64 @@ class TeachingSystemClient:
                 f"{request_label} completed seconds={time.perf_counter() - started_at:.3f}"
             )
         return response
+
+    @staticmethod
+    def _cookie_pairs(cookie_header: str) -> list[tuple[str, str]]:
+        pairs: list[tuple[str, str]] = []
+        for part in cookie_header.split(";"):
+            name, separator, value = part.strip().partition("=")
+            if not separator or not name or not value:
+                raise AuthenticationError("Cookie is malformed during refresh")
+            pairs.append((name, value))
+        if not pairs:
+            raise AuthenticationError("Cookie is malformed during refresh")
+        return pairs
+
+    @staticmethod
+    def _set_cookie_headers(response: requests.Response) -> list[str]:
+        raw_headers = getattr(response.raw, "headers", None)
+        if raw_headers is not None and hasattr(raw_headers, "getlist"):
+            return [value for value in raw_headers.getlist("Set-Cookie") if value]
+        value = response.headers.get("Set-Cookie")
+        return [value] if value else []
+
+    @classmethod
+    def _merge_refreshed_cookie(cls, original: str, set_cookie_headers: list[str]) -> str:
+        merged = cls._cookie_pairs(original)
+        positions = {name: index for index, (name, _) in enumerate(merged)}
+        updates: list[tuple[str, str]] = []
+        for header in set_cookie_headers:
+            parsed = SimpleCookie()
+            try:
+                parsed.load(header)
+            except (TypeError, ValueError):
+                continue
+            updates.extend((name, morsel.value) for name, morsel in parsed.items() if morsel.value)
+        if not updates:
+            raise AuthenticationError("Cookie refresh returned no usable Cookie update")
+        for name, value in updates:
+            if name in positions:
+                merged[positions[name]] = (name, value)
+            else:
+                positions[name] = len(merged)
+                merged.append((name, value))
+        return "; ".join(f"{name}={value}" for name, value in merged)
+
+    def refresh_cookie(self) -> str:
+        """Refresh the existing session Cookie before any business endpoint request."""
+
+        try:
+            response = self._request("GET", "/loginCAS")
+        except TransportError as exc:
+            raise AuthenticationError("Cookie refresh request failed") from exc
+        response_text = response.text.lower()
+        if "统一身份认证" in response.text or "cas/login" in response_text:
+            raise AuthenticationError("Cookie refresh returned a login page")
+        refreshed_cookie = self._merge_refreshed_cookie(
+            self.session.headers.get("Cookie", ""), self._set_cookie_headers(response)
+        )
+        self.session.headers["Cookie"] = refreshed_cookie
+        return refreshed_cookie
 
     @staticmethod
     def _json(response: requests.Response, stage: str) -> object:

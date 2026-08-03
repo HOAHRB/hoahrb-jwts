@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from hoa_cli import app
-from hoa_cli.config import DEFAULT_DATA_DIR
+from hoa_cli.config import DEFAULT_DATA_DIR, CookieSource
 from hoa_cli.errors import (
     AuthenticationError,
     ConfigError,
@@ -33,21 +33,30 @@ def test_cli_accepts_optional_benchmark_flag() -> None:
     assert args.benchmark is True
 
 
+def test_cli_accepts_no_refresh_cookie_flag() -> None:
+    args = app.build_parser().parse_args(["crawl", "--years", "2025", "--no-refresh-cookie"])
+
+    assert args.no_refresh_cookie is True
+
+
 def test_cli_deduplicates_years_and_calls_boundaries_in_order(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     calls: list[str] = []
 
     class FakeSettings:
-        pass
+        cookie_source = CookieSource.PROCESS_ENV
+        cookie_file = None
 
     class FakeGateway:
-        pass
+        def refresh_cookie(self):
+            calls.append("refresh")
+            return "JSESSIONID=refreshed"
 
     discovered = ["first", "second"]
     normalized = {"first": "n1", "second": "n2"}
 
-    def settings_from_env(environ):
+    def settings_from_sources(environ, dotenv_path):
         calls.append("settings")
         return FakeSettings()
 
@@ -68,22 +77,116 @@ def test_cli_deduplicates_years_and_calls_boundaries_in_order(
         calls.append(f"publish:{data_dir.name}:{sorted(years)}:{plans}")
         return PublicationSummary(1, 0, 0, 0)
 
-    monkeypatch.setattr(app.Settings, "from_env", settings_from_env)
+    monkeypatch.setattr(app.Settings, "from_sources", settings_from_sources)
     monkeypatch.setattr(app, "TeachingSystemClient", make_client)
     monkeypatch.setattr(app, "discover_plans", discover)
     monkeypatch.setattr(app, "normalize_plan", normalize)
     monkeypatch.setattr(app, "publish_plans", publish)
-    args = Namespace(years=["2025", "2024", "2025"], data_dir=tmp_path)
+    args = Namespace(years=["2025", "2024", "2025"], data_dir=tmp_path, no_refresh_cookie=False)
     result = app.run_crawl(args, {"HIT_JW_COOKIE": "sanitized"})
     assert result.added == 1
     assert calls == [
         "settings",
         "client",
+        "refresh",
         "discover:('2024', '2025')",
         "normalize:first",
         "normalize:second",
         f"publish:{tmp_path.name}:['2024', '2025']:{('n1', 'n2')}",
     ]
+
+
+def test_crawl_persists_refreshed_dotenv_cookie_before_discovery(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    dotenv_path = tmp_path / ".env"
+    dotenv_path.write_text("HIT_JW_COOKIE=JSESSIONID=old\n", encoding="utf-8")
+    calls: list[str] = []
+
+    class FakeGateway:
+        def refresh_cookie(self):
+            calls.append("refresh")
+            return "JSESSIONID=refreshed"
+
+    def make_client(settings, on_progress):
+        assert settings.cookie_source is CookieSource.DOTENV
+        return FakeGateway()
+
+    def persist(path, cookie):
+        calls.append(f"persist:{path.name}:{cookie}")
+
+    def discover(gateway, years):
+        calls.append("discover")
+        return ()
+
+    monkeypatch.setattr(app, "TeachingSystemClient", make_client)
+    monkeypatch.setattr(app, "persist_dotenv_cookie", persist)
+    monkeypatch.setattr(app, "discover_plans", discover)
+    monkeypatch.setattr(app, "publish_plans", lambda *args: PublicationSummary(0, 0, 0, 0))
+    args = Namespace(years=["2025"], data_dir=tmp_path, no_refresh_cookie=False)
+
+    app.run_crawl(args, {}, dotenv_path=dotenv_path)
+
+    assert calls == ["refresh", "persist:.env:JSESSIONID=refreshed", "discover"]
+
+
+def test_crawl_does_not_persist_process_environment_cookie(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[str] = []
+
+    class FakeSettings:
+        cookie_source = CookieSource.PROCESS_ENV
+        cookie_file = None
+
+    class FakeGateway:
+        def refresh_cookie(self):
+            calls.append("refresh")
+            return "JSESSIONID=refreshed"
+
+    monkeypatch.setattr(app.Settings, "from_sources", lambda *args: FakeSettings())
+    monkeypatch.setattr(app, "TeachingSystemClient", lambda *args, **kwargs: FakeGateway())
+    monkeypatch.setattr(
+        app,
+        "persist_dotenv_cookie",
+        lambda *args: (_ for _ in ()).throw(AssertionError("must not persist process Cookie")),
+    )
+    monkeypatch.setattr(app, "discover_plans", lambda *args: ())
+    monkeypatch.setattr(app, "publish_plans", lambda *args: PublicationSummary(0, 0, 0, 0))
+
+    app.run_crawl(
+        Namespace(years=["2025"], data_dir=tmp_path, no_refresh_cookie=False),
+        {"HIT_JW_COOKIE": "JSESSIONID=process"},
+    )
+
+    assert calls == ["refresh"]
+
+
+def test_crawl_skips_refresh_and_persistence_when_requested(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class FakeSettings:
+        cookie_source = CookieSource.DOTENV
+        cookie_file = tmp_path / ".env"
+
+    class FakeGateway:
+        def refresh_cookie(self):
+            raise AssertionError("refresh must be skipped")
+
+    monkeypatch.setattr(app.Settings, "from_sources", lambda *args: FakeSettings())
+    monkeypatch.setattr(app, "TeachingSystemClient", lambda *args, **kwargs: FakeGateway())
+    monkeypatch.setattr(
+        app,
+        "persist_dotenv_cookie",
+        lambda *args: (_ for _ in ()).throw(AssertionError("persistence must be skipped")),
+    )
+    monkeypatch.setattr(app, "discover_plans", lambda *args: ())
+    monkeypatch.setattr(app, "publish_plans", lambda *args: PublicationSummary(0, 0, 0, 0))
+
+    app.run_crawl(
+        Namespace(years=["2025"], data_dir=tmp_path, no_refresh_cookie=True),
+        {},
+    )
 
 
 @pytest.mark.parametrize(

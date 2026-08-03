@@ -3,13 +3,21 @@
 import math
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from enum import Enum
 from pathlib import Path
 
 from .errors import ConfigError
 
 # Keep the original HITSZ CLI storage location for callers that omit --data-dir.
 DEFAULT_DATA_DIR = Path(__file__).parent / "data"
+
+
+class CookieSource(Enum):
+    """Where the effective teaching-system Cookie was loaded from."""
+
+    PROCESS_ENV = "process_env"
+    DOTENV = "dotenv"
 
 
 @dataclass(frozen=True)
@@ -22,6 +30,8 @@ class Settings:
     timeout_seconds: float
     delay_seconds: float
     max_retries: int
+    cookie_source: CookieSource
+    cookie_file: Path | None
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] = os.environ) -> "Settings":
@@ -61,4 +71,26 @@ class Settings:
             timeout_seconds=timeout_seconds,
             delay_seconds=delay_seconds,
             max_retries=max_retries,
+            cookie_source=CookieSource.PROCESS_ENV,
+            cookie_file=None,
         )
+
+    @classmethod
+    def from_sources(
+        cls, environ: Mapping[str, str], dotenv_path: Path | None = None
+    ) -> "Settings":
+        """Load process environment first, then the project's .env as a Cookie fallback."""
+
+        if "HIT_JW_COOKIE" in environ or dotenv_path is None:
+            return cls.from_env(environ)
+
+        try:
+            from dotenv import dotenv_values
+        except ImportError as exc:
+            raise ConfigError("python-dotenv is required to load HIT_JW_COOKIE from .env") from exc
+
+        dotenv_values_map = dotenv_values(dotenv_path)
+        merged = {key: value for key, value in dotenv_values_map.items() if isinstance(value, str)}
+        merged.update(environ)
+        settings = cls.from_env(merged)
+        return replace(settings, cookie_source=CookieSource.DOTENV, cookie_file=dotenv_path)

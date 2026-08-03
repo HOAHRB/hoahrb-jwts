@@ -12,6 +12,12 @@ from tests.helpers import load_fixture
 @responses.activate
 def test_crawl_writes_all_paginated_courses(tmp_path: Path) -> None:
     responses.get(
+        "http://jwts.hit.edu.cn/loginCAS",
+        body="refreshed session",
+        status=200,
+        headers={"Set-Cookie": "JSESSIONID=refreshed; Path=/"},
+    )
+    responses.get(
         "http://jwts.hit.edu.cn/zxjh/queryZxkc",
         body=load_fixture("catalog_authenticated.html"),
         status=200,
@@ -55,6 +61,8 @@ def test_crawl_writes_all_paginated_courses(tmp_path: Path) -> None:
         },
     )
     assert exit_code == 0
+    assert responses.calls[0].request.url == "http://jwts.hit.edu.cn/loginCAS"
+    assert responses.calls[1].request.url == "http://jwts.hit.edu.cn/zxjh/queryZxkc"
     mapping = json.loads((data_dir / "major_mapping.json").read_text(encoding="utf-8"))
     assert mapping["2025"]["35158"]["plan_ID"] == "HIT-2025-35158"
     generated = toml.load(data_dir / "plans" / "本_2025_人文社科学部_俄语（火箭系统与航天）.toml")
