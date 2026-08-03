@@ -97,6 +97,10 @@ ipython_config.py
 # uv
 #   Similar to poetry.lock and Pipfile.lock, uv.lock is usually committed.
 #uv.lock
+.uv-runtime/
+.uv-cache/
+.uv-python/
+.pytest-tmp/
 
 # pdm
 #   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
@@ -161,3 +165,6 @@ Thumbs.db
 # Cursor & Claude
 .claude/
 .cursor/
+
+# Local planning artifacts
+docs/superpowers/

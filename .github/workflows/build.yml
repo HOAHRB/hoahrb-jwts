@@ -24,6 +24,12 @@ jobs:
       - name: Install the project
         run: uv sync --locked
 
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Test with sanitized fixtures
+        run: uv run pytest -v
+
       - name: Build package
         run: uv build
 
@@ -32,12 +38,3 @@ jobs:
         with:
           name: dist
           path: dist/
-
-      - name: Smoke test - List plans
-        run: uv run hoa plans
-
-      - name: Smoke test - List courses
-        run: uv run hoa courses BEB8D90DE1C870D2E0530B18F80A2908
-
-      - name: Smoke test - Get course info
-        run: uv run hoa info BEB8D90DE1C870D2E0530B18F80A2908 ACCT2001
