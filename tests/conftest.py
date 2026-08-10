@@ -1,6 +1,6 @@
 import pytest
 
-from hoa_cli.config import Settings
+from hoahrb_jwts.config import Settings
 
 
 @pytest.fixture

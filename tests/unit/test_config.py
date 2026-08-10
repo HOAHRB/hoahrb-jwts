@@ -1,7 +1,7 @@
 import pytest
 
-from hoa_cli.config import CookieSource, Settings
-from hoa_cli.errors import ConfigError
+from hoahrb_jwts.config import CookieSource, Settings
+from hoahrb_jwts.errors import ConfigError
 
 
 def test_settings_require_cookie() -> None:

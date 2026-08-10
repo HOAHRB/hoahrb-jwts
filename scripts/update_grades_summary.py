@@ -28,7 +28,7 @@ from typing import Any
 SOURCE_URL = (
     "https://raw.githubusercontent.com/HITSZ-OpenAuto/repos-management/main/grades_summary.toml"
 )
-DEFAULT_DATA_DIR = Path(__file__).resolve().parents[1] / "src" / "hoa_cli" / "data"
+DEFAULT_DATA_DIR = Path(__file__).resolve().parents[1] / "src" / "hoahrb_jwts" / "data"
 PERCENT_RE = re.compile(r"(\d+%)")
 
 
@@ -127,7 +127,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         "--data-dir",
         type=Path,
         default=DEFAULT_DATA_DIR,
-        help="输出目录；默认 src/hoa_cli/data",
+        help="输出目录；默认 src/hoahrb_jwts/data",
     )
     args = parser.parse_args(argv)
 

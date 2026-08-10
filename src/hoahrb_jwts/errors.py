@@ -1,29 +1,29 @@
-"""Stable error categories used by the crawler and its CLI."""
+"""Stable error categories used by the ``jwts`` crawler."""
 
 
-class HoaCliError(Exception):
+class HoahrbJwtsError(Exception):
     """Base class for expected crawler failures."""
 
 
-class ConfigError(HoaCliError):
+class ConfigError(HoahrbJwtsError):
     """The local crawler configuration is missing or invalid."""
 
 
-class AuthenticationError(HoaCliError):
+class AuthenticationError(HoahrbJwtsError):
     """The teaching system did not return an authenticated response."""
 
 
-class TransportError(HoaCliError):
+class TransportError(HoahrbJwtsError):
     """A request could not be completed or returned an unusable status."""
 
 
-class ParseError(HoaCliError):
+class ParseError(HoahrbJwtsError):
     """A response did not match the observed teaching-system contract."""
 
 
-class ValidationError(HoaCliError):
+class ValidationError(HoahrbJwtsError):
     """Discovered or generated data violates a publication invariant."""
 
 
-class PublicationError(HoaCliError):
+class PublicationError(HoahrbJwtsError):
     """A validated candidate could not be published safely."""

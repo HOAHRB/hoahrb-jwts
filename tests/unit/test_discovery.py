@@ -2,10 +2,10 @@ from dataclasses import replace
 
 import pytest
 
-from hoa_cli.discovery import discover_plans
-from hoa_cli.errors import ValidationError
-from hoa_cli.major_rules import rule_for
-from hoa_cli.models import Catalog, Department, Major, SourceCourse
+from hoahrb_jwts.discovery import discover_plans
+from hoahrb_jwts.errors import ValidationError
+from hoahrb_jwts.major_rules import rule_for
+from hoahrb_jwts.models import Catalog, Department, Major, SourceCourse
 
 
 def source_course(code: str = "C001", **overrides: str | None) -> SourceCourse:

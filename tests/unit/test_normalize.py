@@ -3,9 +3,9 @@ from dataclasses import replace
 import pytest
 import toml
 
-from hoa_cli.errors import ValidationError
-from hoa_cli.models import DiscoveredPlan, Major, SourceCourse
-from hoa_cli.normalize import normalize_course, normalize_plan, plan_to_dict
+from hoahrb_jwts.errors import ValidationError
+from hoahrb_jwts.models import DiscoveredPlan, Major, SourceCourse
+from hoahrb_jwts.normalize import normalize_course, normalize_plan, plan_to_dict
 
 
 def source_course(**overrides: str | None) -> SourceCourse:
@@ -51,6 +51,15 @@ def test_normalize_course_supports_observed_years_and_terms(academic_year: str, 
 
 def test_non_exam_indicator_maps_to_assessment() -> None:
     assert normalize_course(source_course(examination_indicator="否")).assessment_method == "考查"
+
+
+def test_blank_exam_indicator_maps_to_assessment() -> None:
+    assert normalize_course(source_course(examination_indicator="")).assessment_method == "考查"
+
+
+def test_unknown_exam_indicator_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="unknown examination indicator"):
+        normalize_course(source_course(examination_indicator="未知"))
 
 
 def test_week_based_hours_are_not_invented() -> None:

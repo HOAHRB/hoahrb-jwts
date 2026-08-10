@@ -1,5 +1,5 @@
-name: 'Setup HOA CLI'
-description: 'Install the HOA CLI tool and its dependencies using uv'
+name: 'Setup HOAHRB JWTS'
+description: 'Install the HOAHRB JWTS tool and its dependencies using uv'
 inputs:
   python-version:
     description: 'Python version to use'
@@ -20,7 +20,7 @@ runs:
         python-version: ${{ inputs.python-version }}
         enable-cache: true
 
-    - name: Install HOA CLI
+    - name: Install HOAHRB JWTS
       run: |
         uv pip install "${{ github.action_path }}"
       shell: bash

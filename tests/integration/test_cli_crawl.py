@@ -5,7 +5,7 @@ from urllib.parse import parse_qs
 import responses
 import toml
 
-from hoa_cli.app import main
+from hoahrb_jwts.app import main
 from tests.helpers import load_fixture
 
 
@@ -63,6 +63,9 @@ def test_crawl_writes_all_paginated_courses(tmp_path: Path) -> None:
     assert exit_code == 0
     assert responses.calls[0].request.url == "http://jwts.hit.edu.cn/loginCAS"
     assert responses.calls[1].request.url == "http://jwts.hit.edu.cn/zxjh/queryZxkc"
+    assert all(
+        call.request.headers["Cookie"] == "JSESSIONID=refreshed" for call in responses.calls[1:]
+    )
     mapping = json.loads((data_dir / "major_mapping.json").read_text(encoding="utf-8"))
     assert mapping["2025"]["35158"]["plan_ID"] == "HIT-2025-35158"
     generated = toml.load(data_dir / "plans" / "本_2025_人文社科学部_俄语（火箭系统与航天）.toml")
@@ -70,4 +73,9 @@ def test_crawl_writes_all_paginated_courses(tmp_path: Path) -> None:
         "22AD11001",
         "22AD16004",
         "22FL22230",
+    ]
+    assert [course["assessment_method"] for course in generated["courses"]] == [
+        "考查",
+        "考查",
+        "考试",
     ]
