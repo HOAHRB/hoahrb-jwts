@@ -14,6 +14,7 @@ from pathlib import Path
 import toml
 
 from .errors import PublicationError, ValidationError
+from .grade_summary import GradeSummary
 from .models import NormalizedPlan
 from .normalize import plan_to_dict
 
@@ -26,21 +27,41 @@ class PublicationSummary:
     unchanged: int
 
 
+@dataclass(frozen=True)
+class GradePublicationSummary:
+    courses: int
+    added: int
+    updated: int
+    unchanged: int
+
+
 def _plan_filename(plan: NormalizedPlan) -> str:
     safe_school_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "-", plan.school_name).rstrip(" .")
     safe_major_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "-", plan.major_name).rstrip(" .")
     if not safe_school_name or not safe_major_name:
         raise ValidationError(f"major {plan.year}/{plan.major_code} has no usable filename")
     # In the code segment after the catalog's full college code, E denotes a
-    # second bachelor's degree and F a minor. College codes are not fixed-width
-    # (for example, 11B), so do not infer their boundary from character count.
+    # second bachelor's degree, while F and Y denote minors. In a code such as
+    # 13BY031, B is the final character of the college code and Y is the actual
+    # plan marker. College codes are not fixed-width; do not infer their
+    # boundary from character count.
     college_suffix = plan.major_code.removeprefix(plan.department_code).upper()
+    is_y_minor = college_suffix.startswith("Y")
     plan_category = (
-        "第二学士学位" if "E" in college_suffix else "辅修" if "F" in college_suffix else "本"
+        "第二学士学位"
+        if "E" in college_suffix
+        else "辅修"
+        if "F" in college_suffix or is_y_minor
+        else "本"
     )
     name_parts = [plan_category, plan.year, safe_school_name]
     if safe_major_name != safe_school_name:
         name_parts.append(safe_major_name)
+    # Y and F plans can have the same year, school, and major name. Keep Y
+    # plans under the `辅修_*.toml` namespace while making their filenames
+    # unambiguous and stable.
+    if is_y_minor:
+        name_parts.append(plan.major_code)
     return "_".join(name_parts) + ".toml"
 
 
@@ -187,7 +208,7 @@ def publish_plans(
     try:
         data_dir.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(
-            prefix=".hoa-stage-", dir=str(data_dir.parent)
+            prefix=".hoahrb-jwts-stage-", dir=str(data_dir.parent)
         ) as stage_name:
             stage = Path(stage_name)
             staged_plans = stage / "plans"
@@ -203,7 +224,9 @@ def publish_plans(
             summary = _summary(plans_path, staged_plans, requested_years)
 
             data_dir.mkdir(parents=True, exist_ok=True)
-            backup_root = Path(tempfile.mkdtemp(prefix=".hoa-backup-", dir=str(data_dir.parent)))
+            backup_root = Path(
+                tempfile.mkdtemp(prefix=".hoahrb-jwts-backup-", dir=str(data_dir.parent))
+            )
             backup_plans = backup_root / "plans"
             backup_mapping = backup_root / "major_mapping.json"
             had_plans = plans_path.exists()
@@ -248,3 +271,98 @@ def publish_plans(
         raise
     except OSError as exc:
         raise PublicationError("could not prepare or publish generated data") from exc
+
+
+def _validate_grade_summary(summary: GradeSummary) -> None:
+    if not isinstance(summary, dict) or not summary:
+        raise ValidationError("grade summary is empty")
+    for course_code, variants in summary.items():
+        if not isinstance(course_code, str) or not course_code.strip():
+            raise ValidationError("grade summary contains an invalid course code")
+        if not isinstance(variants, dict) or not variants:
+            raise ValidationError(f"grade summary {course_code} has no variants")
+        for variant, items in variants.items():
+            if not isinstance(variant, str) or not variant.strip():
+                raise ValidationError(f"grade summary {course_code} has an invalid variant")
+            if not isinstance(items, list) or not items:
+                raise ValidationError(f"grade summary {course_code}/{variant} has no items")
+            for item in items:
+                if not isinstance(item, dict):
+                    raise ValidationError(
+                        f"grade summary {course_code}/{variant} has an invalid item"
+                    )
+                name = item.get("name")
+                if not isinstance(name, str) or not name.strip():
+                    raise ValidationError(
+                        f"grade summary {course_code}/{variant} has an invalid item name"
+                    )
+                percent = item.get("percent")
+                if percent is not None and (
+                    not isinstance(percent, str) or not re.fullmatch(r"\d+(?:\.\d+)?%", percent)
+                ):
+                    raise ValidationError(
+                        f"grade summary {course_code}/{variant} has an invalid percentage"
+                    )
+
+
+def _grade_json_text(summary: GradeSummary) -> str:
+    return json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+
+
+def _load_grade_summary_for_diff(path: Path) -> dict[str, object]:
+    if not path.exists():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def publish_grade_summary(data_dir: Path, summary: GradeSummary) -> GradePublicationSummary:
+    """Atomically replace ``grades_summary.json`` with a validated summary."""
+
+    _validate_grade_summary(summary)
+    data_dir = Path(data_dir)
+    output_path = data_dir / "grades_summary.json"
+    candidate = _grade_json_text(summary)
+    existing = _load_grade_summary_for_diff(output_path)
+    existing_codes = set(existing)
+    new_codes = set(summary)
+    added = len(new_codes - existing_codes)
+    removed_or_missing = len(existing_codes - new_codes)
+    updated = sum(existing.get(code) != summary.get(code) for code in new_codes & existing_codes)
+    unchanged = len(new_codes & existing_codes) - updated
+    # A removed course is represented as an update from the file consumer's
+    # perspective; retain the compact four-field publication summary used by
+    # the plan writer without exposing a second removal field.
+    updated += removed_or_missing
+
+    temporary_path: Path | None = None
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+        fd, raw_temporary_path = tempfile.mkstemp(
+            prefix=".hoahrb-jwts-grades-", suffix=".json", dir=str(data_dir)
+        )
+        temporary_path = Path(raw_temporary_path)
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            handle.write(candidate)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, output_path)
+        temporary_path = None
+    except OSError as exc:
+        raise PublicationError("could not publish grades_summary.json") from exc
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    return GradePublicationSummary(
+        courses=len(summary),
+        added=added,
+        updated=updated,
+        unchanged=unchanged,
+    )

@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from hoa_cli import app
-from hoa_cli.config import DEFAULT_DATA_DIR, CookieSource
-from hoa_cli.errors import (
+from hoahrb_jwts import app
+from hoahrb_jwts.config import DEFAULT_DATA_DIR, CookieSource
+from hoahrb_jwts.errors import (
     AuthenticationError,
     ConfigError,
     ParseError,
@@ -13,7 +13,7 @@ from hoa_cli.errors import (
     TransportError,
     ValidationError,
 )
-from hoa_cli.writer import PublicationSummary
+from hoahrb_jwts.writer import GradePublicationSummary, PublicationSummary
 
 
 def test_cli_requires_years_and_defaults_data_directory_to_original_location() -> None:
@@ -37,6 +37,87 @@ def test_cli_accepts_no_refresh_cookie_flag() -> None:
     args = app.build_parser().parse_args(["crawl", "--years", "2025", "--no-refresh-cookie"])
 
     assert args.no_refresh_cookie is True
+
+
+def test_cli_accepts_grade_crawl_aliases() -> None:
+    assert app.build_parser().parse_args(["grades"]).command == "grades"
+    assert app.build_parser().parse_args(["crawl-grades"]).command == "crawl-grades"
+
+
+def test_grade_crawl_publishes_through_gateway(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[str] = []
+
+    class FakeSettings:
+        cookie_source = CookieSource.PROCESS_ENV
+        cookie_file = None
+        cookie = "JSESSIONID=old"
+
+    class FakeGateway:
+        def refresh_cookie(self):
+            calls.append("refresh")
+            return "JSESSIONID=refreshed"
+
+        def get_grade_summary(self):
+            calls.append("grades")
+            return {"C001": {"default": [{"name": "考试", "percent": "100%"}]}}
+
+    monkeypatch.setattr(app.Settings, "from_sources", lambda *args: FakeSettings())
+    monkeypatch.setattr(app, "TeachingSystemClient", lambda *args, **kwargs: FakeGateway())
+    monkeypatch.setattr(
+        app,
+        "publish_grade_summary",
+        lambda data_dir, summary: (
+            calls.append(f"publish:{data_dir.name}:{sorted(summary)}")
+            or GradePublicationSummary(1, 1, 0, 0)
+        ),
+    )
+
+    result = app.run_grades(
+        Namespace(data_dir=tmp_path, no_refresh_cookie=False),
+        {"HIT_JW_COOKIE": "sanitized"},
+    )
+
+    assert result.courses == 1
+    assert calls == ["refresh", "grades", f"publish:{tmp_path.name}:['C001']"]
+
+
+def test_grade_crawl_persists_refreshed_dotenv_cookie_before_fetch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[str] = []
+    dotenv_path = tmp_path / ".env"
+
+    class FakeSettings:
+        cookie_source = CookieSource.DOTENV
+        cookie_file = dotenv_path
+        cookie = "JSESSIONID=old"
+
+    class FakeGateway:
+        def refresh_cookie(self):
+            calls.append("refresh")
+            return "JSESSIONID=refreshed"
+
+        def get_grade_summary(self):
+            calls.append("grades")
+            raise AuthenticationError("expired")
+
+    monkeypatch.setattr(app.Settings, "from_sources", lambda *args: FakeSettings())
+    monkeypatch.setattr(app, "TeachingSystemClient", lambda *args, **kwargs: FakeGateway())
+    monkeypatch.setattr(
+        app,
+        "persist_dotenv_cookie",
+        lambda path, cookie: calls.append(f"persist:{path.name}:{cookie}"),
+    )
+
+    with pytest.raises(AuthenticationError, match="expired"):
+        app.run_grades(
+            Namespace(data_dir=tmp_path, no_refresh_cookie=False),
+            {"HIT_JW_COOKIE": "sanitized"},
+        )
+
+    assert calls == ["refresh", "persist:.env:JSESSIONID=refreshed", "grades"]
 
 
 def test_cli_deduplicates_years_and_calls_boundaries_in_order(
@@ -96,7 +177,7 @@ def test_cli_deduplicates_years_and_calls_boundaries_in_order(
     ]
 
 
-def test_crawl_persists_refreshed_dotenv_cookie_before_discovery(
+def test_crawl_persists_refreshed_dotenv_cookie_after_discovery(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     dotenv_path = tmp_path / ".env"
@@ -127,7 +208,7 @@ def test_crawl_persists_refreshed_dotenv_cookie_before_discovery(
 
     app.run_crawl(args, {}, dotenv_path=dotenv_path)
 
-    assert calls == ["refresh", "persist:.env:JSESSIONID=refreshed", "discover"]
+    assert calls == ["refresh", "discover", "persist:.env:JSESSIONID=refreshed"]
 
 
 def test_crawl_does_not_persist_process_environment_cookie(

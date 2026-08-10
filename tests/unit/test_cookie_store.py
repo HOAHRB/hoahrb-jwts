@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from hoa_cli.cookie_store import persist_dotenv_cookie
-from hoa_cli.errors import ConfigError
+from hoahrb_jwts.cookie_store import persist_dotenv_cookie
+from hoahrb_jwts.errors import ConfigError
 
 
 def test_persist_dotenv_cookie_replaces_only_cookie_assignment(tmp_path: Path) -> None:
@@ -19,7 +19,7 @@ def test_persist_dotenv_cookie_replaces_only_cookie_assignment(tmp_path: Path) -
 
     assert dotenv_path.read_text(encoding="utf-8") == (
         "# Maintainer-only session\n"
-        "HIT_JW_COOKIE=JSESSIONID=new; ROUTE=campus\n"
+        'HIT_JW_COOKIE="JSESSIONID=new; ROUTE=campus"\n'
         "HTTP_PROXY=http://127.0.0.1:7890\n"
     )
 
@@ -32,7 +32,7 @@ def test_persist_dotenv_cookie_keeps_original_file_when_replacement_fails(
     dotenv_path.write_text(original, encoding="utf-8")
 
     monkeypatch.setattr(
-        "hoa_cli.cookie_store.os.replace", lambda *args: (_ for _ in ()).throw(OSError())
+        "hoahrb_jwts.cookie_store.os.replace", lambda *args: (_ for _ in ()).throw(OSError())
     )
 
     with pytest.raises(ConfigError, match="persist"):

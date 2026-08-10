@@ -12,6 +12,12 @@ from .errors import ConfigError
 _COOKIE_ASSIGNMENT = re.compile(r"^(\s*HIT_JW_COOKIE\s*=).*?(\r?\n|$)", re.MULTILINE)
 
 
+def _dotenv_quote(value: str) -> str:
+    """Encode a Cookie value as a double-quoted dotenv value."""
+
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def persist_dotenv_cookie(dotenv_path: Path, cookie: str) -> None:
     """Replace the existing Cookie assignment without changing unrelated .env text."""
 
@@ -28,7 +34,7 @@ def persist_dotenv_cookie(dotenv_path: Path, cookie: str) -> None:
     def replace_assignment(match: re.Match[str]) -> str:
         nonlocal replacement_count
         replacement_count += 1
-        return f"{match.group(1)}{cookie}{match.group(2)}"
+        return f"{match.group(1)}{_dotenv_quote(cookie)}{match.group(2)}"
 
     updated = _COOKIE_ASSIGNMENT.sub(replace_assignment, original, count=1)
     if replacement_count != 1:

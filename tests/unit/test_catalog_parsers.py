@@ -2,9 +2,9 @@ import json
 
 import pytest
 
-from hoa_cli.errors import AuthenticationError, ParseError
-from hoa_cli.models import Department
-from hoa_cli.parsers import parse_catalog_page, parse_major_list
+from hoahrb_jwts.errors import AuthenticationError, ParseError
+from hoahrb_jwts.models import Department
+from hoahrb_jwts.parsers import parse_catalog_page, parse_major_list
 from tests.helpers import load_fixture
 
 

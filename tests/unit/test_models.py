@@ -1,4 +1,4 @@
-from hoa_cli.models import Department, Major, SourceCourse
+from hoahrb_jwts.models import Department, Major, SourceCourse
 
 
 def test_source_domain_records_are_frozen_and_typed() -> None:

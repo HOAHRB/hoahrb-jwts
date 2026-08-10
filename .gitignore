@@ -101,6 +101,7 @@ ipython_config.py
 .uv-cache/
 .uv-python/
 .pytest-tmp*/
+src/hoahrb_jwts/data/
 
 # pdm
 #   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.

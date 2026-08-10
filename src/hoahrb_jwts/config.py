@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .errors import ConfigError
 
-# Keep the original HITSZ CLI storage location for callers that omit --data-dir.
+# Keep the package data location as the default for callers that omit --data-dir.
 DEFAULT_DATA_DIR = Path(__file__).parent / "data"
 
 

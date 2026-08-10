@@ -4,11 +4,33 @@ import pytest
 import requests
 import responses
 
-from hoa_cli.client import TeachingSystemClient
-from hoa_cli.config import Settings
-from hoa_cli.errors import AuthenticationError, TransportError
-from hoa_cli.models import Major
+from hoahrb_jwts.client import TeachingSystemClient
+from hoahrb_jwts.config import Settings
+from hoahrb_jwts.errors import AuthenticationError, TransportError
+from hoahrb_jwts.models import Major
 from tests.helpers import load_fixture
+
+
+def _grade_list_html(
+    detail_id: str, task_id: str, plan_id: str, *, page_count: int = 1, page_size: int = 20
+) -> str:
+    return f"""
+    <form method='post' action='/cjcx/queryQmcj'>
+      <input name='pageNo' /><input name='pageSize' value='{page_size}' />
+      <input name='pageCount' value='{page_count}' />
+    </form>
+    <div class='cz_button cz_see'
+         onclick=\"queryCjView('{detail_id}', '{task_id}', '{plan_id}')\"></div>
+    """
+
+
+def _grade_detail_html(course_code: str, components: list[tuple[str, str]]) -> str:
+    rows = "".join(
+        f"<tr><th>{name}：</th><td>权重（占总成绩百分比）[{percent}]，满分[100.0]</td>"
+        "<th>本项得分</th><td>90</td></tr>"
+        for name, percent in components
+    )
+    return f"<table><tr><th>课程代码：</th><td>{course_code}</td></tr>{rows}</table>"
 
 
 @responses.activate
@@ -21,6 +43,8 @@ def test_get_catalog_sends_cookie_without_logging_it(settings, caplog) -> None:
     catalog = TeachingSystemClient(settings).get_catalog()
     assert catalog.years == ("2025", "2024")
     assert responses.calls[0].request.headers["Cookie"] == "JSESSIONID=sanitized"
+    assert responses.calls[0].request.headers["User-Agent"].startswith("Mozilla/5.0")
+    assert "maintainer-crawler" not in responses.calls[0].request.headers["User-Agent"]
     assert "JSESSIONID=sanitized" not in caplog.text
 
 
@@ -50,28 +74,64 @@ def test_refresh_cookie_merges_update_and_uses_it_for_later_requests() -> None:
     client.get_catalog()
 
     assert refreshed_cookie == "JSESSIONID=new; CAMPUS=preserved"
+    assert client.settings.cookie == refreshed_cookie
     assert responses.calls[1].request.headers["Cookie"] == refreshed_cookie
 
 
 @responses.activate
-def test_refresh_cookie_rejects_missing_cookie_update(settings) -> None:
-    responses.get("http://jwts.hit.edu.cn/loginCAS", body="session page", status=200)
+def test_refresh_cookie_ignores_empty_cookie_segments() -> None:
+    settings = Settings.from_env(
+        {
+            "HIT_JW_COOKIE": "JSESSIONID=old; CAMPUS=preserved;",
+            "HIT_JW_DELAY_SECONDS": "0",
+            "HIT_JW_MAX_RETRIES": "0",
+        }
+    )
+    responses.get(
+        "http://jwts.hit.edu.cn/loginCAS",
+        body="refreshed session",
+        status=200,
+        headers={"Set-Cookie": "JSESSIONID=new; Path=/; HttpOnly"},
+    )
 
-    with pytest.raises(AuthenticationError, match="no usable Cookie update"):
-        TeachingSystemClient(settings).refresh_cookie()
+    refreshed_cookie = TeachingSystemClient(settings).refresh_cookie()
+
+    assert refreshed_cookie == "JSESSIONID=new; CAMPUS=preserved"
 
 
 @responses.activate
-def test_refresh_cookie_rejects_login_page_even_with_cookie_update(settings) -> None:
+def test_refresh_cookie_keeps_current_cookie_when_login_does_not_update_it(settings) -> None:
+    responses.get("http://jwts.hit.edu.cn/loginCAS", body="session page", status=200)
+    responses.get(
+        "http://jwts.hit.edu.cn/zxjh/queryZxkc",
+        body=load_fixture("catalog_authenticated.html"),
+        status=200,
+    )
+
+    client = TeachingSystemClient(settings)
+    assert client.refresh_cookie() == settings.cookie
+    client.get_catalog()
+    assert responses.calls[1].request.headers["Cookie"] == settings.cookie
+
+
+@responses.activate
+def test_business_request_rejects_login_page_after_cookie_probe(settings) -> None:
     responses.get(
         "http://jwts.hit.edu.cn/loginCAS",
         body="<title>统一身份认证</title>",
         status=200,
         headers={"Set-Cookie": "JSESSIONID=not-authenticated; Path=/"},
     )
+    responses.get(
+        "http://jwts.hit.edu.cn/zxjh/queryZxkc",
+        body=load_fixture("catalog_login.html"),
+        status=200,
+    )
 
-    with pytest.raises(AuthenticationError, match="login page"):
-        TeachingSystemClient(settings).refresh_cookie()
+    client = TeachingSystemClient(settings)
+    client.refresh_cookie()
+    with pytest.raises(AuthenticationError, match="not authenticated"):
+        client.get_catalog()
 
 
 @responses.activate
@@ -91,15 +151,14 @@ def test_refresh_cookie_accepts_redirect_with_cookie_update(settings) -> None:
 
 
 @responses.activate
-def test_refresh_cookie_rejects_redirect_without_cookie_update(settings) -> None:
+def test_refresh_cookie_accepts_redirect_without_cookie_update(settings) -> None:
     responses.get(
         "http://jwts.hit.edu.cn/loginCAS",
         status=302,
-        headers={"Location": "http://jwts.hit.edu.cn/zxjh/queryZxkc"},
+        headers={"Location": "http://ids.hit.edu.cn/authserver/login"},
     )
 
-    with pytest.raises(AuthenticationError, match="no usable Cookie update"):
-        TeachingSystemClient(settings).refresh_cookie()
+    assert TeachingSystemClient(settings).refresh_cookie() == settings.cookie
 
 
 @responses.activate
@@ -152,7 +211,7 @@ def test_get_catalog_rejects_redirect_without_following_or_exposing_secrets(sett
 
 @responses.activate
 def test_get_majors_accepts_redirect_without_following_it(settings) -> None:
-    from hoa_cli.models import Department
+    from hoahrb_jwts.models import Department
 
     responses.post(
         "http://jwts.hit.edu.cn/pub/queryYxzyList_x",
@@ -194,7 +253,7 @@ def test_get_majors_sends_exact_cohort_department_form(settings) -> None:
         body=load_fixture("majors_2025_35.json"),
         status=200,
     )
-    from hoa_cli.models import Department
+    from hoahrb_jwts.models import Department
 
     majors = TeachingSystemClient(settings).get_majors("2025", Department("35", "人文社科学部"))
     assert [major.code for major in majors] == ["35158", "35163"]
@@ -242,3 +301,93 @@ def test_get_plan_posts_all_filters_and_combines_pages(settings) -> None:
             "pageCount": ["2"],
         },
     ]
+
+
+@responses.activate
+def test_get_grade_summary_follows_query_qmcj_detail_button(settings) -> None:
+    responses.get(
+        "http://jwts.hit.edu.cn/cjcx/queryQmcj",
+        body=_grade_list_html("detail-1", "task-1", "plan-1"),
+        status=200,
+    )
+    responses.get(
+        "http://jwts.hit.edu.cn/cjcx/queryCjxxView",
+        body=_grade_detail_html("C001", [("作业", "40.0%"), ("考试", "60.0%")]),
+        status=200,
+    )
+
+    assert TeachingSystemClient(settings).get_grade_summary() == {
+        "C001": {
+            "default": [
+                {"name": "作业", "percent": "40%"},
+                {"name": "考试", "percent": "60%"},
+            ]
+        }
+    }
+
+
+@responses.activate
+def test_get_grade_summary_falls_back_to_post_form(settings) -> None:
+    responses.get(
+        "http://jwts.hit.edu.cn/cjcx/queryQmcj",
+        body="<form><input name='course' /></form>",
+        status=200,
+    )
+    responses.post(
+        "http://jwts.hit.edu.cn/cjcx/queryQmcj",
+        body=_grade_list_html("detail-1", "task-1", "plan-1"),
+        status=200,
+    )
+    responses.get(
+        "http://jwts.hit.edu.cn/cjcx/queryCjxxView",
+        body=_grade_detail_html("C001", [("考试", "100.0%")]),
+        status=200,
+    )
+
+    summary = TeachingSystemClient(settings).get_grade_summary()
+
+    assert summary == {"C001": {"default": [{"name": "考试", "percent": "100%"}]}}
+    assert parse_qs(responses.calls[1].request.body, keep_blank_values=True) == {
+        "pageSize": ["500"]
+    }
+
+
+@responses.activate
+def test_get_grade_summary_posts_later_query_qmcj_pages(settings) -> None:
+    responses.get(
+        "http://jwts.hit.edu.cn/cjcx/queryQmcj",
+        body=_grade_list_html("detail-1", "task-1", "plan-1", page_count=2),
+        status=200,
+    )
+    responses.post(
+        "http://jwts.hit.edu.cn/cjcx/queryQmcj",
+        body=_grade_list_html("detail-2", "task-2", "plan-2", page_count=2),
+        status=200,
+    )
+    responses.get(
+        "http://jwts.hit.edu.cn/cjcx/queryCjxxView",
+        body=_grade_detail_html("C001", [("作业", "30.0%"), ("考试", "70.0%")]),
+        status=200,
+    )
+    responses.get(
+        "http://jwts.hit.edu.cn/cjcx/queryCjxxView",
+        body=_grade_detail_html("C002", [("报告", "100.0%")]),
+        status=200,
+    )
+
+    summary = TeachingSystemClient(settings).get_grade_summary()
+
+    assert summary == {
+        "C001": {
+            "default": [
+                {"name": "作业", "percent": "30%"},
+                {"name": "考试", "percent": "70%"},
+            ]
+        },
+        "C002": {"default": [{"name": "报告", "percent": "100%"}]},
+    }
+    assert parse_qs(responses.calls[1].request.body, keep_blank_values=True) == {
+        "pageNo": ["2"],
+        "pageSize": ["20"],
+        "pageCount": ["2"],
+    }

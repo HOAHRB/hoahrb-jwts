@@ -56,7 +56,8 @@ def _curate_major_name(major: Major) -> Major:
 
 
 def discover_plans(
-    gateway: TeachingSystemGateway, years: tuple[str, ...]
+    gateway: TeachingSystemGateway,
+    years: tuple[str, ...],
 ) -> tuple[DiscoveredPlan, ...]:
     """Discover only non-empty plans returned for the requested cohorts."""
 

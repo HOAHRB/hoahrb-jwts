@@ -55,13 +55,18 @@ def normalize_course(course: SourceCourse) -> NormalizedCourse:
     if not math.isfinite(credit) or credit < 0:
         raise ValidationError(f"course credit is invalid: {credit_text}")
 
-    indicator = _clean(course.examination_indicator)
+    raw_indicator = course.examination_indicator
+    indicator = _clean(raw_indicator)
     assessment_method = {
         "是": "考试",
         "否": "考查",
         "考试": "考试",
         "考查": "考查",
     }.get(indicator)
+    if raw_indicator is not None and indicator is None:
+        assessment_method = "考查"
+    elif indicator is not None and assessment_method is None:
+        raise ValidationError(f"unknown examination indicator: {indicator}")
 
     total_hours = None
     total_hours_text = _clean(course.total_hours)

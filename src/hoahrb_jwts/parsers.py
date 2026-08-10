@@ -177,8 +177,11 @@ def parse_plan_page(html: str) -> PlanPage:
         optional_values = {
             field: _optional(values[index])
             for header, field in _OPTIONAL_PLAN_HEADERS.items()
+            if header != "是否考试课"
             if (index := header_map.get(header)) is not None and index < len(values)
         }
+        examination_index = header_map.get("是否考试课")
+        examination_indicator = values[examination_index] if examination_index is not None else None
         courses.append(
             SourceCourse(
                 code=required_values["课程代码"],
@@ -192,7 +195,7 @@ def parse_plan_page(html: str) -> PlanPage:
                 track=optional_values.get("track"),
                 credit=required_values["学分"],
                 total_hours=optional_values.get("total_hours"),
-                examination_indicator=optional_values.get("examination_indicator"),
+                examination_indicator=examination_indicator,
             )
         )
     return PlanPage(

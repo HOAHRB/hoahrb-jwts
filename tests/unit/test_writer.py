@@ -4,9 +4,9 @@ from pathlib import Path
 import pytest
 import toml
 
-from hoa_cli.errors import PublicationError, ValidationError
-from hoa_cli.models import NormalizedCourse, NormalizedPlan
-from hoa_cli.writer import build_major_mapping, publish_plans
+from hoahrb_jwts.errors import PublicationError, ValidationError
+from hoahrb_jwts.models import NormalizedCourse, NormalizedPlan
+from hoahrb_jwts.writer import build_major_mapping, publish_plans
 
 
 def plan(
@@ -59,15 +59,39 @@ def test_publish_classifies_second_degree_and_minor_codes(tmp_path: Path) -> Non
             plan(year="2024", code="01041", name="自动化", department_code="01"),
             plan(year="2024", code="01E041", name="自动化", department_code="01"),
             plan(year="2024", code="11BF304", name="自动化", department_code="11B"),
+            plan(year="2024", code="11BY304", name="自动化", department_code="11B"),
+            plan(year="2024", code="09Y304", name="自动化", department_code="09"),
+            plan(year="2024", code="5205SY2", name="英才班", department_code="52"),
         ),
         {"2024"},
     )
 
-    assert result.added == 3
+    assert result.added == 6
     plans_dir = data_dir / "plans"
     assert (plans_dir / "本_2024_人文社科学部_自动化.toml").exists()
     assert (plans_dir / "第二学士学位_2024_人文社科学部_自动化.toml").exists()
     assert (plans_dir / "辅修_2024_人文社科学部_自动化.toml").exists()
+    assert (plans_dir / "辅修_2024_人文社科学部_自动化_11BY304.toml").exists()
+    assert (plans_dir / "辅修_2024_人文社科学部_自动化_09Y304.toml").exists()
+    assert (plans_dir / "本_2024_人文社科学部_英才班.toml").exists()
+
+
+def test_publish_keeps_by_and_f_minor_plans_with_the_same_name(tmp_path: Path) -> None:
+    data_dir = tmp_path / "major-data"
+
+    result = publish_plans(
+        data_dir,
+        (
+            plan(year="2025", code="13BF031", name="计算机科学与技术", department_code="13B"),
+            plan(year="2025", code="13BY031", name="计算机科学与技术", department_code="13B"),
+        ),
+        {"2025"},
+    )
+
+    assert result.added == 2
+    plans_dir = data_dir / "plans"
+    assert (plans_dir / "辅修_2025_人文社科学部_计算机科学与技术.toml").exists()
+    assert (plans_dir / "辅修_2025_人文社科学部_计算机科学与技术_13BY031.toml").exists()
 
 
 def test_publish_reports_both_codes_for_same_category_filename_collision(
@@ -184,7 +208,7 @@ def test_publish_rolls_back_when_replacement_fails(
             raise OSError("injected replacement failure")
         return real_replace(source, destination)
 
-    monkeypatch.setattr("hoa_cli.writer.os.replace", fail_once)
+    monkeypatch.setattr("hoahrb_jwts.writer.os.replace", fail_once)
     with pytest.raises(PublicationError):
         publish_plans(data_dir, (plan(),), {"2025"})
     assert original_plan.read_bytes() == original_plan_bytes
@@ -213,14 +237,14 @@ def test_publish_preserves_backup_when_rollback_restore_fails(
             raise OSError("injected publication or restore failure")
         return real_replace(source, destination)
 
-    monkeypatch.setattr("hoa_cli.writer.os.replace", fail_publish_then_restore_plans)
+    monkeypatch.setattr("hoahrb_jwts.writer.os.replace", fail_publish_then_restore_plans)
     with pytest.raises(PublicationError) as error:
         publish_plans(data_dir, (plan(),), {"2025"})
 
     assert (
         str(error.value) == "publication failed and rollback was incomplete; backup was preserved"
     )
-    backup_roots = list(tmp_path.glob(".hoa-backup-*"))
+    backup_roots = list(tmp_path.glob(".hoahrb-jwts-backup-*"))
     assert len(backup_roots) == 1
     assert (backup_roots[0] / "plans" / original_plan.name).read_bytes() == original_plan_bytes
     assert (backup_roots[0] / "major_mapping.json").read_bytes() == original_mapping_bytes
