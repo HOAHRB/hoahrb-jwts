@@ -7,6 +7,7 @@
 - `major_mapping.json`：年级、学院和专业的目录；
 - `plans/*.toml`：每个专业的课程列表。
 - `grades_summary.json`：课程成绩构成及其年级变体。
+- `course_introductions.json`：培养方案中课程的中英文简介。
 
 它不会自动登录教务系统，也不会提交任何数据。正确的流程是：本地抓取 → 查看数据 diff → 人工确认后提交 `hoa-major-data`。
 
@@ -77,7 +78,9 @@ uv run jwts grades --data-dir ..\hoa-major-data
 
 默认情况下，抓取开始前会请求教务系统的 CAS 地址探测现有会话。该请求不一定返回新的 Cookie：没有更新时继续使用当前 Cookie；返回更新时立即更新正在工作的 HTTP 会话，并用它完成本次抓取。实际认证状态由后续业务接口验证。抓取成功后，如果 Cookie 来自 `.env` 且确实发生变化，才会原样保留其他配置和注释并更新其中的 `HIT_JW_COOKIE`；更新后的值会写成双引号包裹的 dotenv 格式，但请求仍使用不带外层引号的 Cookie 值。若需要排查会话问题、坚持使用填写的 Cookie，可加 `--no-refresh-cookie` 跳过这一步。工具不会自动登录，也不会把 Cookie 写入版本库。
 
-`crawl` 只会替换指定年级的 `major_mapping.json` 条目和计划文件；它不会改动 `grades_summary.json`。成绩构成由下面的独立命令抓取。
+`crawl` 会替换指定年级的 `major_mapping.json` 条目和计划文件，并按本次计划中实际出现的课程代码去重抓取中英文课程简介。本次涉及的课程会增量更新到 `course_introductions.json`，未涉及的已有课程保持不变；它不会改动 `grades_summary.json`。成绩构成由下面的独立命令抓取。
+
+课程简介来自 `/pub/queryKcxxView?kcdm=...` 的“课程简介”和“课程英文简介”字段。详情请求会沿用全局重试策略；任一课程在重试后仍失败时，本次 plans、mapping 和 introductions 均不发布。详情页正常返回空简介属于合法数据。
 
 ## 更新培养方案数据
 

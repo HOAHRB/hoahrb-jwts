@@ -51,6 +51,23 @@ def test_crawl_writes_all_paginated_courses(tmp_path: Path) -> None:
         "http://jwts.hit.edu.cn/zxjh/queryZxkc",
         callback=plan_callback,
     )
+
+    def introduction_callback(request):
+        code = parse_qs(request.url.split("?", 1)[1])["kcdm"][0]
+        body = f"""
+        <table>
+          <tr><th>课程代码：</th><td>{code}</td></tr>
+          <tr><th>课程简介：</th><td>{code} 中文简介</td></tr>
+          <tr><th>课程英文简介：</th><td>{code} English introduction</td></tr>
+        </table>
+        """
+        return (200, {"Content-Type": "text/html; charset=utf-8"}, body)
+
+    responses.add_callback(
+        responses.GET,
+        "http://jwts.hit.edu.cn/pub/queryKcxxView",
+        callback=introduction_callback,
+    )
     data_dir = tmp_path / "major-data"
     exit_code = main(
         ["crawl", "--years", "2025", "--data-dir", str(data_dir)],
@@ -79,3 +96,11 @@ def test_crawl_writes_all_paginated_courses(tmp_path: Path) -> None:
         "考查",
         "考试",
     ]
+    introductions = json.loads((data_dir / "course_introductions.json").read_text(encoding="utf-8"))
+    assert list(introductions) == ["22AD11001", "22AD16004", "22FL22230"]
+    assert introductions["22AD11001"] == {
+        "default": {
+            "zh": "22AD11001 中文简介",
+            "en": "22AD11001 English introduction",
+        }
+    }

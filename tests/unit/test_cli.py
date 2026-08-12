@@ -1,5 +1,6 @@
 from argparse import Namespace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -99,6 +100,10 @@ def test_grade_crawl_persists_refreshed_dotenv_cookie_before_fetch(
             calls.append("refresh")
             return "JSESSIONID=refreshed"
 
+        def get_course_introductions(self, course_codes):
+            calls.append(f"introductions:{sorted(course_codes)}")
+            return {"C001": {"default": {"zh": "简介", "en": "intro"}}}
+
         def get_grade_summary(self):
             calls.append("grades")
             raise AuthenticationError("expired")
@@ -134,8 +139,15 @@ def test_cli_deduplicates_years_and_calls_boundaries_in_order(
             calls.append("refresh")
             return "JSESSIONID=refreshed"
 
+        def get_course_introductions(self, course_codes):
+            calls.append(f"introductions:{sorted(course_codes)}")
+            return {"C001": {"default": {"zh": "简介", "en": "intro"}}}
+
     discovered = ["first", "second"]
-    normalized = {"first": "n1", "second": "n2"}
+    normalized = {
+        "first": SimpleNamespace(courses=(SimpleNamespace(course_code="C001"),)),
+        "second": SimpleNamespace(courses=(SimpleNamespace(course_code="C001"),)),
+    }
 
     def settings_from_sources(environ, dotenv_path):
         calls.append("settings")
@@ -154,8 +166,10 @@ def test_cli_deduplicates_years_and_calls_boundaries_in_order(
         calls.append(f"normalize:{value}")
         return normalized[value]
 
-    def publish(data_dir, plans, years):
-        calls.append(f"publish:{data_dir.name}:{sorted(years)}:{plans}")
+    def publish(data_dir, plans, years, introductions):
+        calls.append(
+            f"publish:{data_dir.name}:{sorted(years)}:{len(plans)}:{sorted(introductions)}"
+        )
         return PublicationSummary(1, 0, 0, 0)
 
     monkeypatch.setattr(app.Settings, "from_sources", settings_from_sources)
@@ -173,7 +187,8 @@ def test_cli_deduplicates_years_and_calls_boundaries_in_order(
         "discover:('2024', '2025')",
         "normalize:first",
         "normalize:second",
-        f"publish:{tmp_path.name}:['2024', '2025']:{('n1', 'n2')}",
+        "introductions:['C001']",
+        f"publish:{tmp_path.name}:['2024', '2025']:2:['C001']",
     ]
 
 
