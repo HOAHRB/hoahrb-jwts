@@ -3,6 +3,7 @@ from urllib.parse import parse_qs
 import pytest
 import requests
 import responses
+from responses import matchers
 
 from hoahrb_jwts.client import TeachingSystemClient
 from hoahrb_jwts.config import Settings
@@ -300,6 +301,40 @@ def test_get_plan_posts_all_filters_and_combines_pages(settings) -> None:
             "pageSize": ["500"],
             "pageCount": ["2"],
         },
+    ]
+
+
+@responses.activate
+def test_get_course_introductions_requests_sorted_unique_course_codes(settings) -> None:
+    responses.get(
+        "http://jwts.hit.edu.cn/pub/queryKcxxView",
+        body=load_fixture("course_detail_empty.html"),
+        status=200,
+        match=[matchers.query_param_matcher({"kcdm": "22EMPTY001"})],
+    )
+    responses.get(
+        "http://jwts.hit.edu.cn/pub/queryKcxxView",
+        body=load_fixture("course_detail_bilingual.html"),
+        status=200,
+        match=[matchers.query_param_matcher({"kcdm": "22MA15005"})],
+    )
+
+    result = TeachingSystemClient(settings).get_course_introductions(
+        ["22MA15005", "22EMPTY001", "22MA15005"]
+    )
+
+    assert result == {
+        "22EMPTY001": {"default": {"zh": "", "en": ""}},
+        "22MA15005": {
+            "default": {
+                "zh": "课程包含极限、 一元微分学。",
+                "en": "This course covers limits and calculus.",
+            }
+        },
+    }
+    assert [call.request.path_url for call in responses.calls] == [
+        "/pub/queryKcxxView?kcdm=22EMPTY001",
+        "/pub/queryKcxxView?kcdm=22MA15005",
     ]
 
 

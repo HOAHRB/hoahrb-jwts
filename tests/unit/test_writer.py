@@ -268,3 +268,47 @@ def test_publish_preserves_backup_when_rollback_restore_fails(
 def test_publish_rejects_plans_outside_requested_year(tmp_path: Path) -> None:
     with pytest.raises(ValidationError):
         publish_plans(tmp_path / "data", (plan(year="2024"),), {"2025"})
+
+
+def test_publish_incrementally_updates_involved_course_introductions(tmp_path: Path) -> None:
+    data_dir = tmp_path / "major-data"
+    data_dir.mkdir()
+    (data_dir / "course_introductions.json").write_text(
+        json.dumps(
+            {
+                "C001": {"default": {"zh": "旧简介", "en": "old"}},
+                "PRESERVED": {"default": {"zh": "保留", "en": "preserved"}},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = publish_plans(
+        data_dir,
+        (plan(),),
+        {"2025"},
+        {"C001": {"default": {"zh": "", "en": "new"}}},
+    )
+
+    introductions = json.loads((data_dir / "course_introductions.json").read_text(encoding="utf-8"))
+    assert introductions == {
+        "C001": {"default": {"zh": "", "en": "new"}},
+        "PRESERVED": {"default": {"zh": "保留", "en": "preserved"}},
+    }
+    assert result.introductions.courses == 1
+    assert result.introductions.updated == 1
+
+
+def test_publish_rejects_invalid_existing_course_introductions(tmp_path: Path) -> None:
+    data_dir = tmp_path / "major-data"
+    data_dir.mkdir()
+    (data_dir / "course_introductions.json").write_text("not json", encoding="utf-8")
+
+    with pytest.raises(PublicationError, match="course_introductions"):
+        publish_plans(
+            data_dir,
+            (plan(),),
+            {"2025"},
+            {"C001": {"default": {"zh": "简介", "en": "intro"}}},
+        )

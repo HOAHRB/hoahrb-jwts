@@ -13,6 +13,7 @@ from pathlib import Path
 
 import toml
 
+from .course_introduction import CourseIntroductions
 from .errors import PublicationError, ValidationError
 from .grade_summary import GradeSummary
 from .models import NormalizedPlan
@@ -24,6 +25,15 @@ class PublicationSummary:
     added: int
     updated: int
     removed: int
+    unchanged: int
+    introductions: IntroductionPublicationSummary | None = None
+
+
+@dataclass(frozen=True)
+class IntroductionPublicationSummary:
+    courses: int
+    added: int
+    updated: int
     unchanged: int
 
 
@@ -129,6 +139,48 @@ def _load_existing_mapping(path: Path) -> dict[str, object]:
     return value
 
 
+def _validate_course_introductions(introductions: CourseIntroductions) -> None:
+    if not isinstance(introductions, dict):
+        raise ValidationError("course introductions must be an object")
+    for course_code, variants in introductions.items():
+        if not isinstance(course_code, str) or not course_code.strip():
+            raise ValidationError("course introductions contain an invalid course code")
+        if not isinstance(variants, dict) or set(variants) != {"default"}:
+            raise ValidationError(f"course introductions {course_code} must have default variant")
+        introduction = variants["default"]
+        if not isinstance(introduction, dict) or set(introduction) != {"zh", "en"}:
+            raise ValidationError(f"course introductions {course_code} have invalid fields")
+        if not all(isinstance(introduction[key], str) for key in ("zh", "en")):
+            raise ValidationError(f"course introductions {course_code} contain invalid text")
+
+
+def _load_course_introductions(path: Path) -> CourseIntroductions:
+    if not path.exists():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PublicationError("existing course_introductions.json cannot be read") from exc
+    try:
+        _validate_course_introductions(value)
+    except ValidationError as exc:
+        raise PublicationError("existing course_introductions.json is invalid") from exc
+    return value
+
+
+def _merge_course_introductions(
+    existing: CourseIntroductions, involved: CourseIntroductions
+) -> tuple[CourseIntroductions, IntroductionPublicationSummary]:
+    _validate_course_introductions(involved)
+    candidate = {**existing, **involved}
+    candidate = {code: candidate[code] for code in sorted(candidate)}
+    added = len(set(involved) - set(existing))
+    common = set(involved) & set(existing)
+    updated = sum(existing[code] != involved[code] for code in common)
+    unchanged = len(common) - updated
+    return candidate, IntroductionPublicationSummary(len(involved), added, updated, unchanged)
+
+
 def _year_from_filename(path: Path) -> str | None:
     match = re.match(r"(?:(\d{4})_|[^_]+_(\d{4})_)", path.name)
     return (match.group(1) or match.group(2)) if match else None
@@ -175,7 +227,10 @@ def _summary(
 
 
 def publish_plans(
-    data_dir: Path, plans: Sequence[NormalizedPlan], requested_years: set[str]
+    data_dir: Path,
+    plans: Sequence[NormalizedPlan],
+    requested_years: set[str],
+    introductions: CourseIntroductions | None = None,
 ) -> PublicationSummary:
     """Validate and atomically replace generated files for requested years."""
 
@@ -185,6 +240,7 @@ def publish_plans(
     data_dir = Path(data_dir)
     mapping_path = data_dir / "major_mapping.json"
     plans_path = data_dir / "plans"
+    introductions_path = data_dir / "course_introductions.json"
     existing_mapping = _load_existing_mapping(mapping_path)
     candidate_mapping = {
         year: existing_mapping[year]
@@ -193,6 +249,12 @@ def publish_plans(
     }
     candidate_mapping.update(generated_mapping)
     candidate_mapping = {year: candidate_mapping[year] for year in sorted(candidate_mapping)}
+    introduction_summary: IntroductionPublicationSummary | None = None
+    candidate_introductions: CourseIntroductions | None = None
+    if introductions is not None:
+        candidate_introductions, introduction_summary = _merge_course_introductions(
+            _load_course_introductions(introductions_path), introductions
+        )
 
     try:
         data_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -210,6 +272,11 @@ def publish_plans(
                 _write_toml(staged_plans / filename, plan)
             staged_mapping = stage / "major_mapping.json"
             staged_mapping.write_text(_json_text(candidate_mapping), encoding="utf-8")
+            staged_introductions = stage / "course_introductions.json"
+            if candidate_introductions is not None:
+                staged_introductions.write_text(
+                    _json_text(candidate_introductions), encoding="utf-8"
+                )
             summary = _summary(plans_path, staged_plans, requested_years)
 
             data_dir.mkdir(parents=True, exist_ok=True)
@@ -218,10 +285,13 @@ def publish_plans(
             )
             backup_plans = backup_root / "plans"
             backup_mapping = backup_root / "major_mapping.json"
+            backup_introductions = backup_root / "course_introductions.json"
             had_plans = plans_path.exists()
             had_mapping = mapping_path.exists()
+            had_introductions = introductions_path.exists()
             plans_backed_up = False
             mapping_backed_up = False
+            introductions_backed_up = False
             rollback_incomplete = False
             try:
                 if had_plans:
@@ -230,8 +300,13 @@ def publish_plans(
                 if had_mapping:
                     os.replace(mapping_path, backup_mapping)
                     mapping_backed_up = True
+                if candidate_introductions is not None and had_introductions:
+                    os.replace(introductions_path, backup_introductions)
+                    introductions_backed_up = True
                 os.replace(staged_plans, plans_path)
                 os.replace(staged_mapping, mapping_path)
+                if candidate_introductions is not None:
+                    os.replace(staged_introductions, introductions_path)
             except OSError as exc:
                 try:
                     if plans_backed_up and plans_path.exists():
@@ -242,10 +317,20 @@ def publish_plans(
                         _remove_path(mapping_path)
                     elif not had_mapping and mapping_path.exists():
                         _remove_path(mapping_path)
+                    if introductions_backed_up and introductions_path.exists():
+                        _remove_path(introductions_path)
+                    elif (
+                        candidate_introductions is not None
+                        and not had_introductions
+                        and introductions_path.exists()
+                    ):
+                        _remove_path(introductions_path)
                     if plans_backed_up and backup_plans.exists():
                         os.replace(backup_plans, plans_path)
                     if mapping_backed_up and backup_mapping.exists():
                         os.replace(backup_mapping, mapping_path)
+                    if introductions_backed_up and backup_introductions.exists():
+                        os.replace(backup_introductions, introductions_path)
                 except OSError as restore_error:
                     rollback_incomplete = True
                     raise PublicationError(
@@ -255,7 +340,13 @@ def publish_plans(
             finally:
                 if backup_root.exists() and not rollback_incomplete:
                     shutil.rmtree(backup_root, ignore_errors=True)
-            return summary
+            return PublicationSummary(
+                summary.added,
+                summary.updated,
+                summary.removed,
+                summary.unchanged,
+                introduction_summary,
+            )
     except PublicationError:
         raise
     except OSError as exc:

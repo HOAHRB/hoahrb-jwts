@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import replace
 from http.cookies import SimpleCookie
 from typing import Any
@@ -13,6 +13,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from .config import Settings
+from .course_introduction import CourseIntroductions, parse_course_introduction
 from .errors import AuthenticationError, ParseError, TransportError
 from .grade_summary import (
     GradeDetailReference,
@@ -232,6 +233,17 @@ class TeachingSystemClient:
                 raise ParseError("execution-plan page count changed during pagination")
             all_courses.extend(parsed.courses)
         return tuple(all_courses)
+
+    def get_course_introductions(self, course_codes: Collection[str]) -> CourseIntroductions:
+        """Fetch bilingual introductions for sorted unique course codes."""
+
+        introductions: CourseIntroductions = {}
+        for course_code in sorted(set(course_codes)):
+            response = self._request("GET", "/pub/queryKcxxView", params={"kcdm": course_code})
+            introductions[course_code] = {
+                "default": parse_course_introduction(response.text, course_code)
+            }
+        return introductions
 
     def get_grade_summary(self, page_size: int = 500) -> GradeSummary:
         """Fetch grade-component weights from ``/cjcx/queryQmcj``.

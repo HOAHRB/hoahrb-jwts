@@ -110,7 +110,9 @@ def run_crawl(
             raise ConfigError(".env Cookie source has no persistence path")
         persist_dotenv_cookie(settings.cookie_file, refreshed_cookie)
     normalized = tuple(normalize_plan(plan) for plan in discovered)
-    return publish_plans(data_dir, normalized, set(years))
+    course_codes = {course.course_code for plan in normalized for course in plan.courses}
+    introductions = gateway.get_course_introductions(course_codes) if course_codes else {}
+    return publish_plans(data_dir, normalized, set(years), introductions)
 
 
 def run_grades(
@@ -164,6 +166,13 @@ def main(argv: Sequence[str] | None = None, environ: Mapping[str, str] = os.envi
             f"added={summary.added} updated={summary.updated} "
             f"removed={summary.removed} unchanged={summary.unchanged}"
         )
+        if summary.introductions is not None:
+            introductions = summary.introductions
+            print(
+                "published introductions: "
+                f"courses={introductions.courses} added={introductions.added} "
+                f"updated={introductions.updated} unchanged={introductions.unchanged}"
+            )
     else:
         print(
             "published grades: "
