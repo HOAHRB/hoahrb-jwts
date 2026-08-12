@@ -88,7 +88,7 @@ def test_publish_keeps_same_name_plans_in_different_categories(tmp_path: Path) -
                 code="13BY031",
                 name="计算机科学与技术",
                 department_code="13B",
-                category="Y",
+                category="本科国际生",
             ),
         ),
         {"2025"},
@@ -97,7 +97,9 @@ def test_publish_keeps_same_name_plans_in_different_categories(tmp_path: Path) -
     assert result.added == 2
     plans_dir = data_dir / "plans"
     assert (plans_dir / "辅修_2025_人文社科学部_计算机科学与技术.toml").exists()
-    assert (plans_dir / "Y_2025_人文社科学部_计算机科学与技术_13BY031.toml").exists()
+    assert (
+        plans_dir / "本科国际生_2025_人文社科学部_计算机科学与技术_13BY031.toml"
+    ).exists()
 
 
 def test_publish_reports_both_codes_for_same_category_filename_collision(

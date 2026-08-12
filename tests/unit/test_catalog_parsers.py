@@ -54,7 +54,7 @@ def test_parse_major_list_rejects_malformed_entries() -> None:
         ("35E158", "俄语【第二学士学位】", "35", "第二学士学位"),
         ("35M2501", "国际传播", "35", "微专业"),
         ("3525L01", "工科试验班", "35", "本"),
-        ("35Y158", "俄语", "35", "Y"),
+        ("35Y158", "俄语", "35", "本科国际生"),
         ("35X158", "未知方案", "35", "未分类"),
     ],
 )
@@ -75,7 +75,7 @@ def test_parse_major_list_y_marker_overrides_wrong_explicit_category() -> None:
         "2025",
         Department("09", "土木工程学院"),
     )[0]
-    assert major.category == "Y"
+    assert major.category == "本科国际生"
 
 
 def test_parse_major_list_overrides_known_01044_source_error() -> None:

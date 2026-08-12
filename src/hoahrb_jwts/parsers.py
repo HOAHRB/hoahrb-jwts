@@ -118,11 +118,11 @@ def parse_major_list(payload: object, year: str, department: Department) -> tupl
                 category = "辅修"
             else:
                 category = "未分类"
-        # Y is an explicit correction marker and overrides a wrong source
-        # label. Its academic meaning is not established, so keep it as an
-        # independent category. Confirmed source exceptions are applied last.
+        # Y explicitly identifies international undergraduate plans and
+        # overrides a wrong source label. Confirmed source exceptions are
+        # applied last.
         if suffix.startswith("Y"):
-            category = "Y"
+            category = "本科国际生"
         if normalized_code in _KNOWN_UNDERGRADUATE_MAJOR_CODES:
             category = "本"
         if not name:

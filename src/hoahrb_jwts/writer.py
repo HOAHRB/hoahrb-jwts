@@ -50,15 +50,16 @@ def _plan_filename(plan: NormalizedPlan) -> str:
     safe_major_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "-", plan.major_name).rstrip(" .")
     if not safe_school_name or not safe_major_name:
         raise ValidationError(f"major {plan.year}/{plan.major_code} has no usable filename")
-    if plan.category not in {"本", "辅修", "第二学士学位", "微专业", "未分类", "Y"}:
+    if plan.category not in {"本", "辅修", "第二学士学位", "本科国际生", "微专业", "未分类"}:
         raise ValidationError(f"major {plan.year}/{plan.major_code} has unknown category")
     college_suffix = plan.major_code.removeprefix(plan.department_code).upper()
     is_y_override = college_suffix.startswith("Y")
     name_parts = [plan.category, plan.year, safe_school_name]
     if safe_major_name != safe_school_name:
         name_parts.append(safe_major_name)
-    # A Y correction plan can coexist with a same-name plan in another
-    # category. Append its code solely to keep both filenames deterministic.
+    # An international undergraduate plan can coexist with a same-name plan
+    # in another category. Append its code solely to keep both filenames
+    # deterministic.
     if is_y_override:
         name_parts.append(plan.major_code)
     return "_".join(name_parts) + ".toml"
