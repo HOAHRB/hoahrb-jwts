@@ -80,16 +80,45 @@ def parse_major_list(payload: object, year: str, department: Department) -> tupl
             raise ParseError(f"major list entry {index} has an invalid pageZydm")
         if not isinstance(raw_name, str) or not raw_name.strip():
             raise ParseError(f"major list entry {index} has an invalid pageZymc")
-        name = re.sub(r"【[^】]*】$", "", _text(raw_name)).strip()
+        normalized_code = _text(code)
+        normalized_year = _text(year)
+        suffix = normalized_code.removeprefix(department.code).upper()
+        display_name = _text(raw_name)
+        category_match = re.search(r"【([^】]+)】$", display_name)
+        if category_match:
+            category = category_match.group(1).strip()
+            if category not in {"本", "辅修", "第二学士学位"}:
+                raise ParseError(f"major list entry {index} has unknown category {category}")
+            name = display_name[: category_match.start()].strip()
+        else:
+            name = display_name
+            if suffix.startswith("M"):
+                category = "微专业"
+            elif re.match(r"^(?:\d{2})?L", suffix):
+                category = "本"
+            elif "E" in suffix:
+                category = "第二学士学位"
+            elif "F" in suffix:
+                category = "辅修"
+            else:
+                category = "未分类"
+        # Y is an explicit correction marker and overrides a wrong source
+        # label. Its academic meaning is not established, so keep it as an
+        # independent category. 01044 is the one known exception.
+        if suffix.startswith("Y"):
+            category = "Y"
+        if normalized_code == "01044":
+            category = "本"
         if not name:
             raise ParseError(f"major list entry {index} has an empty major name")
         majors.append(
             Major(
-                year=_text(year),
+                year=normalized_year,
                 department_code=department.code,
                 department_name=department.name,
-                code=_text(code),
+                code=normalized_code,
                 name=name,
+                category=category,
             )
         )
     return tuple(majors)

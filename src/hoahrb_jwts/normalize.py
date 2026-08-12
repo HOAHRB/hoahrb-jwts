@@ -94,6 +94,7 @@ def normalize_plan(plan: DiscoveredPlan) -> NormalizedPlan:
     major_code = _required(major.code, "major code")
     major_name = _required(major.name, "major name")
     school_name = _required(major.department_name, "school name")
+    category = _required(major.category, "plan category")
     normalized_courses = tuple(normalize_course(course) for course in plan.courses)
     if not normalized_courses:
         raise ValidationError(f"plan {year}/{major_code} has no courses")
@@ -103,6 +104,7 @@ def normalize_plan(plan: DiscoveredPlan) -> NormalizedPlan:
         major_code=major_code,
         major_name=major_name,
         school_name=school_name,
+        category=category,
         plan_id=f"HIT-{year}-{major_code}",
         courses=normalized_courses,
     )
@@ -114,6 +116,7 @@ def plan_to_dict(plan: NormalizedPlan) -> dict[str, object]:
         "major_code": plan.major_code,
         "major_name": plan.major_name,
         "school_name": plan.school_name,
+        "plan_category": plan.category,
         "plan_ID": plan.plan_id,
     }
     courses: list[dict[str, object]] = []

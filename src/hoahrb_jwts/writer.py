@@ -40,27 +40,16 @@ def _plan_filename(plan: NormalizedPlan) -> str:
     safe_major_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "-", plan.major_name).rstrip(" .")
     if not safe_school_name or not safe_major_name:
         raise ValidationError(f"major {plan.year}/{plan.major_code} has no usable filename")
-    # In the code segment after the catalog's full college code, E denotes a
-    # second bachelor's degree, while F and Y denote minors. In a code such as
-    # 13BY031, B is the final character of the college code and Y is the actual
-    # plan marker. College codes are not fixed-width; do not infer their
-    # boundary from character count.
+    if plan.category not in {"本", "辅修", "第二学士学位", "微专业", "未分类", "Y"}:
+        raise ValidationError(f"major {plan.year}/{plan.major_code} has unknown category")
     college_suffix = plan.major_code.removeprefix(plan.department_code).upper()
-    is_y_minor = college_suffix.startswith("Y")
-    plan_category = (
-        "第二学士学位"
-        if "E" in college_suffix
-        else "辅修"
-        if "F" in college_suffix or is_y_minor
-        else "本"
-    )
-    name_parts = [plan_category, plan.year, safe_school_name]
+    is_y_override = college_suffix.startswith("Y")
+    name_parts = [plan.category, plan.year, safe_school_name]
     if safe_major_name != safe_school_name:
         name_parts.append(safe_major_name)
-    # Y and F plans can have the same year, school, and major name. Keep Y
-    # plans under the `辅修_*.toml` namespace while making their filenames
-    # unambiguous and stable.
-    if is_y_minor:
+    # A Y correction plan can coexist with a same-name plan in another
+    # category. Append its code solely to keep both filenames deterministic.
+    if is_y_override:
         name_parts.append(plan.major_code)
     return "_".join(name_parts) + ".toml"
 

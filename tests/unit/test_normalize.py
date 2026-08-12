@@ -71,11 +71,13 @@ def test_week_based_hours_are_not_invented() -> None:
 def test_plan_id_is_deterministic() -> None:
     plan = normalize_plan(discovered_plan())
     assert plan.plan_id == "HIT-2025-35158"
+    assert plan.category == "本"
 
 
 def test_plan_to_dict_uses_compatibility_keys_and_omits_unknown_fields() -> None:
     data = plan_to_dict(normalize_plan(discovered_plan()))
     assert data["info"]["plan_ID"] == "HIT-2025-35158"
+    assert data["info"]["plan_category"] == "本"
     course = data["courses"][0]
     assert "hours" not in course
     assert "track" not in course
