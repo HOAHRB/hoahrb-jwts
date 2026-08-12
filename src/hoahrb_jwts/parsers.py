@@ -10,6 +10,22 @@ from bs4 import BeautifulSoup
 from .errors import AuthenticationError, ParseError
 from .models import Catalog, Department, Major, PlanPage, SourceCourse
 
+_KNOWN_UNDERGRADUATE_MAJOR_CODES = {
+    "01044",
+    "260126Q01",
+    "260226Q02",
+    "260326Q03",
+    "260426Q04",
+    "260726Q05",
+    "260826Q07",
+    "260926Q08",
+    "261026Q10",
+    "261326Q13",
+    "52RGZNZGC",
+    "52JDYQ01",
+    "37289",
+}
+
 
 def _text(value: object) -> str:
     return " ".join(str(value).split())
@@ -104,10 +120,10 @@ def parse_major_list(payload: object, year: str, department: Department) -> tupl
                 category = "未分类"
         # Y is an explicit correction marker and overrides a wrong source
         # label. Its academic meaning is not established, so keep it as an
-        # independent category. 01044 is the one known exception.
+        # independent category. Confirmed source exceptions are applied last.
         if suffix.startswith("Y"):
             category = "Y"
-        if normalized_code == "01044":
+        if normalized_code in _KNOWN_UNDERGRADUATE_MAJOR_CODES:
             category = "本"
         if not name:
             raise ParseError(f"major list entry {index} has an empty major name")

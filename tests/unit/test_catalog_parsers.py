@@ -87,6 +87,33 @@ def test_parse_major_list_overrides_known_01044_source_error() -> None:
     assert major.category == "本"
 
 
+@pytest.mark.parametrize(
+    "code",
+    [
+        "260126Q01",
+        "260226Q02",
+        "260326Q03",
+        "260426Q04",
+        "260726Q05",
+        "260826Q07",
+        "260926Q08",
+        "261026Q10",
+        "261326Q13",
+        "52RGZNZGC",
+        "52JDYQ01",
+        "37289",
+    ],
+)
+def test_parse_major_list_keeps_confirmed_2026_programs_as_undergraduate(code: str) -> None:
+    major = parse_major_list(
+        [{"pageZydm": code, "pageZymc": "2026 已确认本科方案"}],
+        "2026",
+        Department("26" if code.startswith("26") else code[:2], "学院"),
+    )[0]
+
+    assert major.category == "本"
+
+
 def test_parse_major_list_rejects_unknown_explicit_category() -> None:
     with pytest.raises(ParseError, match="unknown category"):
         parse_major_list(
