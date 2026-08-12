@@ -15,6 +15,7 @@ def plan(
     name: str = "俄语",
     school_name: str = "人文社科学部",
     department_code: str = "35",
+    category: str = "本",
 ) -> NormalizedPlan:
     course = NormalizedCourse(
         course_code="C001",
@@ -36,6 +37,7 @@ def plan(
         school_name,
         f"HIT-{year}-{code}",
         (course,),
+        category,
     )
 
 
@@ -50,40 +52,44 @@ def test_build_major_mapping_is_sorted_and_compatible() -> None:
     }
 
 
-def test_publish_classifies_second_degree_and_minor_codes(tmp_path: Path) -> None:
+def test_publish_uses_parsed_plan_categories(tmp_path: Path) -> None:
     data_dir = tmp_path / "major-data"
 
     result = publish_plans(
         data_dir,
         (
             plan(year="2024", code="01041", name="自动化", department_code="01"),
-            plan(year="2024", code="01E041", name="自动化", department_code="01"),
-            plan(year="2024", code="11BF304", name="自动化", department_code="11B"),
-            plan(year="2024", code="11BY304", name="自动化", department_code="11B"),
-            plan(year="2024", code="09Y304", name="自动化", department_code="09"),
-            plan(year="2024", code="5205SY2", name="英才班", department_code="52"),
+            plan(year="2024", code="01E041", name="自动化", category="第二学士学位"),
+            plan(year="2024", code="11BF304", name="自动化", category="辅修"),
+            plan(year="2024", code="35M2501", name="国际传播", category="微专业"),
+            plan(year="2024", code="35X001", name="未知方案", category="未分类"),
         ),
         {"2024"},
     )
 
-    assert result.added == 6
+    assert result.added == 5
     plans_dir = data_dir / "plans"
     assert (plans_dir / "本_2024_人文社科学部_自动化.toml").exists()
     assert (plans_dir / "第二学士学位_2024_人文社科学部_自动化.toml").exists()
     assert (plans_dir / "辅修_2024_人文社科学部_自动化.toml").exists()
-    assert (plans_dir / "辅修_2024_人文社科学部_自动化_11BY304.toml").exists()
-    assert (plans_dir / "辅修_2024_人文社科学部_自动化_09Y304.toml").exists()
-    assert (plans_dir / "本_2024_人文社科学部_英才班.toml").exists()
+    assert (plans_dir / "微专业_2024_人文社科学部_国际传播.toml").exists()
+    assert (plans_dir / "未分类_2024_人文社科学部_未知方案.toml").exists()
 
 
-def test_publish_keeps_by_and_f_minor_plans_with_the_same_name(tmp_path: Path) -> None:
+def test_publish_keeps_same_name_plans_in_different_categories(tmp_path: Path) -> None:
     data_dir = tmp_path / "major-data"
 
     result = publish_plans(
         data_dir,
         (
-            plan(year="2025", code="13BF031", name="计算机科学与技术", department_code="13B"),
-            plan(year="2025", code="13BY031", name="计算机科学与技术", department_code="13B"),
+            plan(year="2025", code="13BF031", name="计算机科学与技术", category="辅修"),
+            plan(
+                year="2025",
+                code="13BY031",
+                name="计算机科学与技术",
+                department_code="13B",
+                category="Y",
+            ),
         ),
         {"2025"},
     )
@@ -91,7 +97,7 @@ def test_publish_keeps_by_and_f_minor_plans_with_the_same_name(tmp_path: Path) -
     assert result.added == 2
     plans_dir = data_dir / "plans"
     assert (plans_dir / "辅修_2025_人文社科学部_计算机科学与技术.toml").exists()
-    assert (plans_dir / "辅修_2025_人文社科学部_计算机科学与技术_13BY031.toml").exists()
+    assert (plans_dir / "Y_2025_人文社科学部_计算机科学与技术_13BY031.toml").exists()
 
 
 def test_publish_reports_both_codes_for_same_category_filename_collision(
@@ -105,6 +111,15 @@ def test_publish_reports_both_codes_for_same_category_filename_collision(
                 plan(year="2024", code="01042", name="自动化"),
             ),
             {"2024"},
+        )
+
+
+def test_publish_rejects_unknown_plan_category(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="unknown category"):
+        publish_plans(
+            tmp_path / "major-data",
+            (plan(category="未知"),),
+            {"2025"},
         )
 
 

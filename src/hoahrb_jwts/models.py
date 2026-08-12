@@ -16,6 +16,7 @@ class Major:
     department_name: str
     code: str
     name: str
+    category: str = "本"
 
 
 @dataclass(frozen=True)
@@ -77,3 +78,4 @@ class NormalizedPlan:
     school_name: str
     plan_id: str
     courses: tuple[NormalizedCourse, ...]
+    category: str = "本"

@@ -73,7 +73,7 @@ def discover_plans(
     discovered: dict[tuple[str, str], DiscoveredPlan] = {}
     major_identities: dict[tuple[str, str], Major] = {}
     valid_counts = dict.fromkeys(requested_years, 0)
-    queried_majors: set[tuple[str, str, str, str, str]] = set()
+    queried_majors: set[tuple[str, str, str, str, str, str]] = set()
 
     for year in requested_years:
         for department in catalog.departments:
@@ -93,6 +93,7 @@ def discover_plans(
                     major.department_name,
                     major.code,
                     major.name,
+                    major.category,
                 )
                 if major_key in queried_majors:
                     continue
