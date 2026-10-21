@@ -400,9 +400,28 @@ def test_saved_session_can_be_loaded_into_firefox(settings):
     from dataclasses import replace
     from hoahrb_jwts.auth_session import TeachingSession
     from hoahrb_jwts.browser_login import export_browser_cookies
+
     with TeachingSession(replace(settings, cas_cookie="TGC=remembered")) as session:
         cookies = export_browser_cookies(session)
     cas = next(item for item in cookies if item["name"] == "TGC")
     assert cas["value"] == "remembered"
     assert cas["domain"] == "ids.hit.edu.cn"
     assert cas["secure"] is True
+
+
+def test_login_browser_fallback_and_native_user_agent():
+    from unittest.mock import MagicMock
+    from playwright.sync_api import Error
+    from hoahrb_jwts.browser_login import launch_login_browser
+
+    runtime = MagicMock()
+    browser = launch_login_browser(runtime, {"headless": False})
+    assert browser is runtime.firefox.launch.return_value
+    runtime.chromium.launch.assert_not_called()
+    runtime.firefox.launch.side_effect = Error("not installed")
+    assert (
+        launch_login_browser(runtime, {"headless": False}) is runtime.chromium.launch.return_value
+    )
+    runtime.webkit.launch.assert_not_called()
+    runtime.chromium.launch.side_effect = Error("not installed")
+    assert launch_login_browser(runtime, {"headless": False}) is runtime.webkit.launch.return_value

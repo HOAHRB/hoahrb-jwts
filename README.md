@@ -217,3 +217,5 @@ git -C ..\hoa-major-data commit -m "data: update HIT grade components"
 make check
 make build
 ```
+
+浏览器按 Firefox → Chromium → WebKit 顺序尝试已安装的 Playwright 引擎，仅启动失败时切换。保留引擎原生 UA，设置 zh-CN、Asia/Shanghai 和 1366×768 视口，使用可见窗口；不使用固定旧版或跨引擎 UA。验证码由维护者手动完成。

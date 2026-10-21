@@ -12,6 +12,20 @@ from .errors import AuthenticationError, ConfigError, LoginRequired
 AUTHENTICATION_LOCK = threading.RLock()
 
 
+def launch_login_browser(runtime, launch_options: dict):
+    """Prefer Firefox; fall back only when the installed engine cannot launch."""
+    from playwright.sync_api import Error as BrowserError
+
+    for name in ("firefox", "chromium", "webkit"):
+        try:
+            return getattr(runtime, name).launch(**launch_options)
+        except BrowserError:
+            continue
+    raise ConfigError(
+        "没有可启动的浏览器，请运行 uv run playwright install firefox 并确认存在桌面会话"
+    )
+
+
 def import_browser_cookies(session: TeachingSession, cookies: list[dict]) -> None:
     allowed = {urlsplit(session.settings.base_url).hostname, "ids.hit.edu.cn"}
     session._client.cookies.clear()
@@ -66,7 +80,7 @@ def export_browser_cookies(session: TeachingSession) -> list[dict]:
 
 
 def browser_login(settings: Settings, *, timeout_seconds: float = 300) -> None:
-    """Use an isolated Firefox window; verify imported cookies before writing any file."""
+    """Use an available isolated browser; verify cookies before writing any file."""
     if settings.cookie_file is None:
         raise ConfigError("浏览器登录需要文件来源的配置，进程环境凭据无法持久化")
     try:
@@ -90,9 +104,16 @@ def browser_login(settings: Settings, *, timeout_seconds: float = 300) -> None:
                     launch_options["proxy"].update(
                         username=unquote(parsed.username), password=unquote(parsed.password or "")
                     )
-            browser = runtime.firefox.launch(**launch_options)
+            browser = launch_login_browser(runtime, launch_options)
             try:
-                context = browser.new_context()
+                # Keep the engine's real UA (including its installed version and
+                # platform) rather than spoofing a stale, inconsistent UA string.
+                context = browser.new_context(
+                    locale="zh-CN",
+                    timezone_id="Asia/Shanghai",
+                    viewport={"width": 1366, "height": 768},
+                    extra_http_headers={"Accept-Language": "zh-CN,zh;q=0.9"},
+                )
                 with TeachingSession(settings) as saved:
                     context.add_cookies(export_browser_cookies(saved))
                 page = context.new_page()
@@ -117,9 +138,7 @@ def browser_login(settings: Settings, *, timeout_seconds: float = 300) -> None:
             finally:
                 browser.close()
     except BrowserError:
-        raise ConfigError(
-            "无法使用 Firefox 完成登录，请运行 uv run playwright install firefox 并确认存在桌面会话；也可手动更新 Cookie"
-        ) from None
+        raise ConfigError("浏览器登录未完成，请检查窗口和站点连接；也可手动更新 Cookie") from None
 
 
 def ensure_startup_authentication(settings: Settings) -> None:
