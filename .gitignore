@@ -169,3 +169,9 @@ Thumbs.db
 
 # Local planning artifacts
 docs/superpowers/
+
+# Local authentication state and atomic-write temporaries
+.env.cookies.json
+.env.lock
+.jwts-cookie-*
+.jwts-state-*

@@ -6,17 +6,18 @@ import json
 import time
 from collections.abc import Callable, Collection
 from dataclasses import replace
-from http.cookies import SimpleCookie
 from typing import Any, TypeVar
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from .auth_session import TeachingSession
+from .browser_login import browser_login
 from .checkpoint import CrawlCheckpoint
 from .config import Settings
 from .course_introduction import CourseIntroductions, parse_course_introduction
-from .errors import AuthenticationError, ParseError, TransportError
+from .errors import AuthenticationError, LoginRequired, ParseError, TransportError
 from .grade_summary import (
     GradeDetailReference,
     GradeSummary,
@@ -68,6 +69,8 @@ class TeachingSystemClient:
         self._on_progress = on_progress
         self._request_count = 0
         self._checkpoint = checkpoint
+        self._auth = TeachingSession(settings, session=self.session)
+        self.recover_authentication = True
 
     def _parsed_request(
         self, method: str, path: str, parse: Callable[[str], T], **kwargs: Any
@@ -76,7 +79,10 @@ class TeachingSystemClient:
             return self._request(method, path, **kwargs).text
 
         if self._checkpoint is None:
-            return parse(fetch())
+            parsed = parse(fetch())
+            self._auth._verified = True
+            self._auth.persist_verified_cookie()
+            return parsed
         key = json.dumps(
             [self._url(path), method, kwargs.get("data"), kwargs.get("params")],
             sort_keys=True,
@@ -86,7 +92,16 @@ class TeachingSystemClient:
             if self._on_progress is not None:
                 self._on_progress(f"checkpoint hit {method} {path}")
 
-        return self._checkpoint.read_or_fetch(key, fetch, parse, on_hit)
+        def verified_parse(text):
+            parsed = parse(text)
+            # Cached bodies cannot verify the current live Cookie jar.
+            if self._last_request_succeeded:
+                self._auth._verified = True
+                self._auth.persist_verified_cookie()
+            return parsed
+
+        self._last_request_succeeded = False
+        return self._checkpoint.read_or_fetch(key, fetch, verified_parse, on_hit)
 
     def _url(self, path: str) -> str:
         return f"{self.settings.base_url}/{path.lstrip('/')}"
@@ -100,26 +115,11 @@ class TeachingSystemClient:
             self._on_progress(f"{request_label} started")
         started_at = time.perf_counter()
         try:
-            response = self.session.request(
-                method,
-                self._url(path),
-                timeout=self.settings.timeout_seconds,
-                proxies=self.settings.proxies,
-                allow_redirects=False,
-                **kwargs,
-            )
-        except requests.RequestException as exc:
+            response = self._auth._read(method, path, refresh=self.recover_authentication, **kwargs)
+        except (AuthenticationError, TransportError):
             self._last_request_succeeded = False
-            raise TransportError(f"request failed during {path}") from exc
+            raise
 
-        if response.status_code in {401, 403}:
-            self._last_request_succeeded = False
-            raise AuthenticationError(f"authentication failed during {path}")
-        if response.status_code >= 400:
-            self._last_request_succeeded = False
-            raise TransportError(
-                f"teaching system returned HTTP {response.status_code} during {path}"
-            )
         self._last_request_succeeded = True
         if self._on_progress is not None:
             self._on_progress(
@@ -127,72 +127,38 @@ class TeachingSystemClient:
             )
         return response
 
-    @staticmethod
-    def _cookie_pairs(cookie_header: str) -> list[tuple[str, str]]:
-        pairs: list[tuple[str, str]] = []
-        for part in cookie_header.split(";"):
-            name, separator, value = part.strip().partition("=")
-            if not part.strip():
-                continue
-            if not separator or not name or not value:
-                raise AuthenticationError("Cookie is malformed during refresh")
-            pairs.append((name, value))
-        if not pairs:
-            raise AuthenticationError("Cookie is malformed during refresh")
-        return pairs
-
-    @staticmethod
-    def _set_cookie_headers(response: requests.Response) -> list[str]:
-        raw_headers = getattr(response.raw, "headers", None)
-        if raw_headers is not None and hasattr(raw_headers, "getlist"):
-            values = [value for value in raw_headers.getlist("Set-Cookie") if value]
-            if values:
-                return values
-        value = response.headers.get("Set-Cookie")
-        if value:
-            return [value]
-        return [f"{name}={cookie.value}" for name, cookie in response.cookies.items()]
-
-    @classmethod
-    def _merge_refreshed_cookie(cls, original: str, set_cookie_headers: list[str]) -> str:
-        merged = cls._cookie_pairs(original)
-        positions = {name: index for index, (name, _) in enumerate(merged)}
-        updates: list[tuple[str, str]] = []
-        for header in set_cookie_headers:
-            parsed = SimpleCookie()
-            try:
-                parsed.load(header)
-            except (TypeError, ValueError):
-                continue
-            updates.extend((name, morsel.value) for name, morsel in parsed.items() if morsel.value)
-        if not updates:
-            return original
-        for name, value in updates:
-            if name in positions:
-                merged[positions[name]] = (name, value)
-            else:
-                positions[name] = len(merged)
-                merged.append((name, value))
-        return "; ".join(f"{name}={value}" for name, value in merged)
-
-    def _activate_cookie(self, cookie: str) -> None:
-        if not cookie.strip():
-            raise AuthenticationError("Cookie refresh left no usable Cookie")
-        self.session.headers["Cookie"] = cookie
-        self.settings = replace(self.settings, cookie=cookie)
-
     def refresh_cookie(self) -> str:
-        """Synchronize an optional CAS Cookie update before business requests."""
-
+        """Verify first; recover CAS once and open Firefox only when sign-in is required."""
         try:
-            response = self._request("GET", "/loginCAS")
-        except TransportError as exc:
-            raise AuthenticationError("Cookie refresh request failed") from exc
-        refreshed_cookie = self._merge_refreshed_cookie(
-            self.session.headers.get("Cookie", ""), self._set_cookie_headers(response)
-        )
-        self._activate_cookie(refreshed_cookie)
-        return refreshed_cookie
+            self._auth.check_authentication()
+        except LoginRequired:
+            from dotenv import dotenv_values
+
+            if self.settings.cookie_file is not None:
+                current = dotenv_values(
+                    self.settings.cookie_file, encoding="utf-8-sig", interpolate=False
+                )["HIT_JW_COOKIE"]
+                self.settings = replace(self.settings, cookie=current)
+            browser_login(self.settings)
+            cookie = dotenv_values(
+                self.settings.cookie_file, encoding="utf-8-sig", interpolate=False
+            )["HIT_JW_COOKIE"]
+            self.settings = replace(self.settings, cookie=cookie)
+            self._auth = TeachingSession(self.settings, session=self.session)
+        cookie = self._auth._prepare("GET", "/").headers.get("Cookie", "")
+        self.settings = replace(self.settings, cookie=cookie)
+        return cookie
+
+    def relogin(self) -> None:
+        """Force browser authentication, reusing the saved CAS session when valid."""
+        browser_login(self.settings)
+        from dotenv import dotenv_values
+
+        cookie = dotenv_values(self.settings.cookie_file, encoding="utf-8-sig", interpolate=False)[
+            "HIT_JW_COOKIE"
+        ]
+        self.settings = replace(self.settings, cookie=cookie)
+        self._auth = TeachingSession(self.settings, session=self.session)
 
     @staticmethod
     def _json(response: requests.Response, stage: str) -> object:
@@ -383,4 +349,6 @@ class TeachingSystemClient:
 
         if not all_grades:
             raise ParseError("grade-summary response has no recognizable course records")
+        self._auth._verified = True
+        self._auth.persist_verified_cookie()
         return all_grades

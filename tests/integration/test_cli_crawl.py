@@ -78,10 +78,10 @@ def test_crawl_writes_all_paginated_courses(tmp_path: Path) -> None:
         },
     )
     assert exit_code == 0
-    assert responses.calls[0].request.url == "http://jwts.hit.edu.cn/loginCAS"
+    assert responses.calls[0].request.url == "http://jwts.hit.edu.cn/zxjh/queryZxkc"
     assert responses.calls[1].request.url == "http://jwts.hit.edu.cn/zxjh/queryZxkc"
     assert all(
-        call.request.headers["Cookie"] == "JSESSIONID=refreshed" for call in responses.calls[1:]
+        call.request.headers["Cookie"] == "JSESSIONID=sanitized" for call in responses.calls[1:]
     )
     mapping = json.loads((data_dir / "major_mapping.json").read_text(encoding="utf-8"))
     assert mapping["2025"]["35158"]["plan_ID"] == "HIT-2025-35158"

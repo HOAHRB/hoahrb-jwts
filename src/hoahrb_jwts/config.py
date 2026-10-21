@@ -32,6 +32,7 @@ class Settings:
     max_retries: int
     cookie_source: CookieSource
     cookie_file: Path | None
+    cas_cookie: str = field(default="", repr=False)
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] = os.environ) -> "Settings":
@@ -73,6 +74,7 @@ class Settings:
             max_retries=max_retries,
             cookie_source=CookieSource.PROCESS_ENV,
             cookie_file=None,
+            cas_cookie=environ.get("HIT_JW_CAS_COOKIE", "").strip(),
         )
 
     @classmethod
@@ -81,7 +83,7 @@ class Settings:
     ) -> "Settings":
         """Load process environment first, then the project's .env as a Cookie fallback."""
 
-        if "HIT_JW_COOKIE" in environ or dotenv_path is None:
+        if "HIT_JW_COOKIE" in environ or "HIT_JW_CAS_COOKIE" in environ or dotenv_path is None:
             return cls.from_env(environ)
 
         try:
@@ -89,7 +91,7 @@ class Settings:
         except ImportError as exc:
             raise ConfigError("python-dotenv is required to load HIT_JW_COOKIE from .env") from exc
 
-        dotenv_values_map = dotenv_values(dotenv_path)
+        dotenv_values_map = dotenv_values(dotenv_path, encoding="utf-8-sig", interpolate=False)
         merged = {key: value for key, value in dotenv_values_map.items() if isinstance(value, str)}
         merged.update(environ)
         settings = cls.from_env(merged)

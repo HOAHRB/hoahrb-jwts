@@ -12,6 +12,7 @@ dependencies = [
     "beautifulsoup4>=4.13.0",
     "python-dotenv>=1.0.0",
     "requests>=2.32.0",
+    "playwright>=1.48.0",
     "toml>=0.10.2",
 ]
 

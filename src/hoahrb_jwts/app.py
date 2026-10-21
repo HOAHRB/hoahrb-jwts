@@ -12,8 +12,7 @@ from pathlib import Path
 
 from .checkpoint import CrawlCheckpoint
 from .client import TeachingSystemClient
-from .config import DEFAULT_DATA_DIR, CookieSource, Settings
-from .cookie_store import persist_dotenv_cookie
+from .config import DEFAULT_DATA_DIR, Settings
 from .discovery import discover_plans
 from .errors import (
     AuthenticationError,
@@ -87,9 +86,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="data directory (defaults to the bundled data directory)",
     )
     crawl_parser.add_argument(
-        "--no-refresh-cookie",
+        "--relogin",
         action="store_true",
-        help="use HIT_JW_COOKIE unchanged instead of refreshing it through CAS",
+        help="open Firefox to reauthenticate using saved session state and persist verified cookies",
     )
     crawl_parser.add_argument(
         "--benchmark", action="store_true", help="print total local crawl duration"
@@ -106,9 +105,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="data directory (defaults to the bundled data directory)",
     )
     grades_parser.add_argument(
-        "--no-refresh-cookie",
+        "--relogin",
         action="store_true",
-        help="use HIT_JW_COOKIE unchanged instead of refreshing it through CAS",
+        help="open Firefox to reauthenticate using saved session state and persist verified cookies",
     )
     grades_parser.add_argument(
         "--benchmark", action="store_true", help="print total local crawl duration"
@@ -140,18 +139,11 @@ def run_crawl(
     if getattr(args, "fresh", False):
         checkpoint.clear()
     gateway = TeachingSystemClient(settings, on_progress=_print_progress, checkpoint=checkpoint)
-    refreshed_cookie: str | None = None
-    if not args.no_refresh_cookie:
-        refreshed_cookie = gateway.refresh_cookie()
+    if getattr(args, "relogin", False):
+        gateway.relogin()
+    else:
+        gateway.refresh_cookie()
     discovered = discover_plans(gateway, years)
-    if (
-        refreshed_cookie is not None
-        and settings.cookie_source is CookieSource.DOTENV
-        and refreshed_cookie != settings.cookie
-    ):
-        if settings.cookie_file is None:
-            raise ConfigError(".env Cookie source has no persistence path")
-        persist_dotenv_cookie(settings.cookie_file, refreshed_cookie)
     normalized = tuple(normalize_plan(plan) for plan in discovered)
     course_codes = {course.course_code for plan in normalized for course in plan.courses}
     introductions = gateway.get_course_introductions(course_codes) if course_codes else {}
@@ -175,17 +167,10 @@ def run_grades(
 
     settings = Settings.from_sources(environ, dotenv_path or _project_dotenv_path())
     gateway = TeachingSystemClient(settings, on_progress=_print_progress)
-    refreshed_cookie: str | None = None
-    if not args.no_refresh_cookie:
-        refreshed_cookie = gateway.refresh_cookie()
-    if (
-        refreshed_cookie is not None
-        and settings.cookie_source is CookieSource.DOTENV
-        and refreshed_cookie != settings.cookie
-    ):
-        if settings.cookie_file is None:
-            raise ConfigError(".env Cookie source has no persistence path")
-        persist_dotenv_cookie(settings.cookie_file, refreshed_cookie)
+    if getattr(args, "relogin", False):
+        gateway.relogin()
+    else:
+        gateway.refresh_cookie()
     summary = gateway.get_grade_summary()
     return publish_grade_summary(Path(args.data_dir), summary)
 

@@ -27,3 +27,7 @@ class ValidationError(HoahrbJwtsError):
 
 class PublicationError(HoahrbJwtsError):
     """A validated candidate could not be published safely."""
+
+
+class LoginRequired(AuthenticationError):
+    """Interactive login is required; distinct from transport and authorization errors."""

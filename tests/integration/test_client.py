@@ -50,186 +50,154 @@ def test_get_catalog_sends_cookie_without_logging_it(settings, caplog) -> None:
 
 
 @responses.activate
-def test_refresh_cookie_merges_update_and_uses_it_for_later_requests() -> None:
-    settings = Settings.from_env(
-        {
-            "HIT_JW_COOKIE": "JSESSIONID=old; CAMPUS=preserved",
-            "HIT_JW_DELAY_SECONDS": "0",
-            "HIT_JW_MAX_RETRIES": "0",
-        }
-    )
+def test_refresh_checks_valid_cookie_without_cas(settings):
     responses.get(
-        "http://jwts.hit.edu.cn/loginCAS",
-        body="refreshed session",
-        status=200,
-        headers={"Set-Cookie": "JSESSIONID=new; Path=/; HttpOnly"},
+        "http://jwts.hit.edu.cn/zxjh/queryZxkc", body=load_fixture("catalog_authenticated.html")
     )
-    responses.get(
-        "http://jwts.hit.edu.cn/zxjh/queryZxkc",
-        body=load_fixture("catalog_authenticated.html"),
-        status=200,
-    )
-    client = TeachingSystemClient(settings)
-
-    refreshed_cookie = client.refresh_cookie()
-    client.get_catalog()
-
-    assert refreshed_cookie == "JSESSIONID=new; CAMPUS=preserved"
-    assert client.settings.cookie == refreshed_cookie
-    assert responses.calls[1].request.headers["Cookie"] == refreshed_cookie
-
-
-@responses.activate
-def test_refresh_cookie_ignores_empty_cookie_segments() -> None:
-    settings = Settings.from_env(
-        {
-            "HIT_JW_COOKIE": "JSESSIONID=old; CAMPUS=preserved;",
-            "HIT_JW_DELAY_SECONDS": "0",
-            "HIT_JW_MAX_RETRIES": "0",
-        }
-    )
-    responses.get(
-        "http://jwts.hit.edu.cn/loginCAS",
-        body="refreshed session",
-        status=200,
-        headers={"Set-Cookie": "JSESSIONID=new; Path=/; HttpOnly"},
-    )
-
-    refreshed_cookie = TeachingSystemClient(settings).refresh_cookie()
-
-    assert refreshed_cookie == "JSESSIONID=new; CAMPUS=preserved"
-
-
-@responses.activate
-def test_refresh_cookie_keeps_current_cookie_when_login_does_not_update_it(settings) -> None:
-    responses.get("http://jwts.hit.edu.cn/loginCAS", body="session page", status=200)
-    responses.get(
-        "http://jwts.hit.edu.cn/zxjh/queryZxkc",
-        body=load_fixture("catalog_authenticated.html"),
-        status=200,
-    )
-
     client = TeachingSystemClient(settings)
     assert client.refresh_cookie() == settings.cookie
-    client.get_catalog()
-    assert responses.calls[1].request.headers["Cookie"] == settings.cookie
+    assert len(responses.calls) == 1
 
 
 @responses.activate
-def test_business_request_rejects_login_page_after_cookie_probe(settings) -> None:
+def test_expired_session_recovers_cas_then_replays_query(settings):
+    from dataclasses import replace
+
+    settings = replace(settings, cas_cookie="TGC=existing")
+    responses.get("http://jwts.hit.edu.cn/zxjh/queryZxkc", status=401)
     responses.get(
         "http://jwts.hit.edu.cn/loginCAS",
-        body="<title>统一身份认证</title>",
-        status=200,
-        headers={"Set-Cookie": "JSESSIONID=not-authenticated; Path=/"},
+        status=302,
+        headers={"Location": "https://ids.hit.edu.cn/authserver/login?service=private"},
     )
     responses.get(
-        "http://jwts.hit.edu.cn/zxjh/queryZxkc",
-        body=load_fixture("catalog_login.html"),
-        status=200,
-    )
-
-    client = TeachingSystemClient(settings)
-    client.refresh_cookie()
-    with pytest.raises(AuthenticationError, match="not authenticated"):
-        client.get_catalog()
-
-
-@responses.activate
-def test_refresh_cookie_accepts_redirect_with_cookie_update(settings) -> None:
-    responses.get(
-        "http://jwts.hit.edu.cn/loginCAS",
+        "https://ids.hit.edu.cn/authserver/login?service=private",
         status=302,
         headers={
-            "Location": "http://jwts.hit.edu.cn/zxjh/queryZxkc",
-            "Set-Cookie": "JSESSIONID=redirect-refreshed; Path=/; HttpOnly",
+            "Location": "http://jwts.hit.edu.cn/callback?ticket=private",
+            "Set-Cookie": "TGC=rotated; Secure; Path=/",
         },
     )
-
-    refreshed_cookie = TeachingSystemClient(settings).refresh_cookie()
-
-    assert refreshed_cookie == "JSESSIONID=redirect-refreshed"
-
-
-@responses.activate
-def test_refresh_cookie_accepts_redirect_without_cookie_update(settings) -> None:
     responses.get(
-        "http://jwts.hit.edu.cn/loginCAS",
+        "http://jwts.hit.edu.cn/callback?ticket=private",
         status=302,
-        headers={"Location": "http://ids.hit.edu.cn/authserver/login"},
+        headers={"Location": "/main", "Set-Cookie": "JSESSIONID=new; Path=/"},
     )
-
-    assert TeachingSystemClient(settings).refresh_cookie() == settings.cookie
-
-
-@responses.activate
-def test_refresh_cookie_maps_transport_failure_to_authentication_error(settings) -> None:
-    def timeout_callback(_request):
-        raise requests.Timeout("timed out")
-
-    responses.add_callback(
-        responses.GET,
-        "http://jwts.hit.edu.cn/loginCAS",
-        callback=timeout_callback,
-    )
-
-    with pytest.raises(AuthenticationError, match="refresh request failed"):
-        TeachingSystemClient(settings).refresh_cookie()
-
-
-@responses.activate
-def test_get_catalog_rejects_login_page(settings) -> None:
+    responses.get("http://jwts.hit.edu.cn/main", body="ready")
     responses.get(
-        "http://jwts.hit.edu.cn/zxjh/queryZxkc",
-        body=load_fixture("catalog_login.html"),
-        status=200,
+        "http://jwts.hit.edu.cn/zxjh/queryZxkc", body=load_fixture("catalog_authenticated.html")
     )
-    with pytest.raises(AuthenticationError):
+    client = TeachingSystemClient(settings)
+    assert client.get_catalog().years == ("2025", "2024")
+    cas = [c for c in responses.calls if "ids.hit.edu.cn" in c.request.url][0]
+    assert cas.request.headers.get("Cookie") == "TGC=existing"
+    for call in responses.calls:
+        if "jwts.hit.edu.cn" in call.request.url:
+            assert "TGC=" not in call.request.headers.get("Cookie", "")
+
+
+@responses.activate
+def test_failed_login_does_not_write_cookie(settings, tmp_path):
+    from dataclasses import replace
+    from hoahrb_jwts.config import CookieSource
+    from hoahrb_jwts.errors import LoginRequired
+
+    path = tmp_path / ".env"
+    path.write_text('HIT_JW_COOKIE="JSESSIONID=sanitized"', encoding="utf-8")
+    settings = replace(settings, cookie_source=CookieSource.DOTENV, cookie_file=path)
+    responses.get("http://jwts.hit.edu.cn/zxjh/queryZxkc", body=load_fixture("catalog_login.html"))
+    responses.get(
+        "http://jwts.hit.edu.cn/loginCAS",
+        body='<input type="password">',
+        headers={"Set-Cookie": "JSESSIONID=unverified; Path=/"},
+    )
+    with pytest.raises(LoginRequired):
         TeachingSystemClient(settings).get_catalog()
+    assert "JSESSIONID=sanitized" in path.read_text()
+    assert not path.with_name(".env.cookies.json").exists()
 
 
 @responses.activate
-def test_get_catalog_rejects_redirect_without_following_or_exposing_secrets(settings) -> None:
+def test_startup_login_opens_firefox_only_for_login_required(settings, monkeypatch):
+    from hoahrb_jwts.errors import LoginRequired
+
+    responses.get("http://jwts.hit.edu.cn/zxjh/queryZxkc", status=401)
+    responses.get("http://jwts.hit.edu.cn/loginCAS", body='<input type="password">')
+    calls = []
+
+    def login(_settings):
+        calls.append("browser")
+        raise LoginRequired("cancelled")
+
+    monkeypatch.setattr("hoahrb_jwts.client.browser_login", login)
+    with pytest.raises(LoginRequired):
+        TeachingSystemClient(settings).refresh_cookie()
+    assert calls == ["browser"]
+
+
+@responses.activate
+def test_refresh_transport_failure_remains_transport_failure(settings):
+    def fail(_request):
+        raise requests.Timeout("private")
+
+    responses.add_callback(responses.GET, "http://jwts.hit.edu.cn/zxjh/queryZxkc", callback=fail)
+    with pytest.raises(TransportError):
+        TeachingSystemClient(settings).refresh_cookie()
+    assert len(responses.calls) == 1
+
+
+@responses.activate
+def test_untrusted_redirect_rejected_without_leaking_ticket(settings):
     responses.get(
         "http://jwts.hit.edu.cn/zxjh/queryZxkc",
-        body="redirect body with Cookie: JSESSIONID=server-secret",
         status=302,
-        headers={"Location": "http://jwts.hit.edu.cn/auth/login"},
+        headers={"Location": "https://evil.example/?ticket=private"},
     )
-    responses.get(
-        "http://jwts.hit.edu.cn/auth/login",
-        body=load_fixture("catalog_authenticated.html"),
-        status=200,
-    )
-
     with pytest.raises(AuthenticationError) as error:
         TeachingSystemClient(settings).get_catalog()
-
+    assert "private" not in str(error.value)
     assert len(responses.calls) == 1
-    assert "JSESSIONID=sanitized" not in str(error.value)
-    assert "server-secret" not in str(error.value)
 
 
 @responses.activate
-def test_get_majors_accepts_redirect_without_following_it(settings) -> None:
+def test_business_post_redirect_is_not_parsed_as_json(settings):
     from hoahrb_jwts.models import Department
 
     responses.post(
         "http://jwts.hit.edu.cn/pub/queryYxzyList_x",
-        body='[{"pageZydm": "35158", "pageZymc": "俄语"}]',
+        body='[{"pageZydm":"35158","pageZymc":"俄语"}]',
         status=302,
-        headers={"Location": "http://jwts.hit.edu.cn/auth/login"},
+        headers={"Location": "/loginCAS"},
     )
-    responses.get(
-        "http://jwts.hit.edu.cn/auth/login",
-        body=load_fixture("majors_2025_35.json"),
-        status=200,
-    )
-
-    majors = TeachingSystemClient(settings).get_majors("2025", Department("35", "人文社科学部"))
-
+    client = TeachingSystemClient(settings)
+    client.recover_authentication = False
+    with pytest.raises(AuthenticationError):
+        client.get_majors("2025", Department("35", "人文社科学部"))
     assert len(responses.calls) == 1
-    assert [major.code for major in majors] == ["35158"]
+
+
+@responses.activate
+def test_verified_rotation_is_persisted_and_restored(settings, tmp_path):
+    from dataclasses import replace
+    from hoahrb_jwts.config import CookieSource
+
+    path = tmp_path / ".env"
+    path.write_bytes(b'\xef\xbb\xbf# keep\r\nHIT_JW_COOKIE="JSESSIONID=sanitized" # keep\r\n')
+    settings = replace(settings, cookie_source=CookieSource.DOTENV, cookie_file=path)
+    responses.get(
+        "http://jwts.hit.edu.cn/zxjh/queryZxkc",
+        body=load_fixture("catalog_authenticated.html"),
+        headers=[
+            ("Set-Cookie", "JSESSIONID=new; Path=/"),
+            ("Set-Cookie", "scoped=value; Path=/pub"),
+        ],
+    )
+    TeachingSystemClient(settings).get_catalog()
+    updated = Settings.from_sources({}, path)
+    client = TeachingSystemClient(updated)
+    assert "scoped=value" in client._auth._prepare("GET", "/pub/test").headers.get("Cookie", "")
+    assert "scoped=" not in client._auth._prepare("GET", "/").headers.get("Cookie", "")
+    assert path.read_bytes() == b'\xef\xbb\xbf# keep\r\nHIT_JW_COOKIE="JSESSIONID=new" # keep\r\n'
 
 
 @responses.activate
@@ -426,3 +394,15 @@ def test_get_grade_summary_posts_later_query_qmcj_pages(settings) -> None:
         "pageSize": ["20"],
         "pageCount": ["2"],
     }
+
+
+def test_saved_session_can_be_loaded_into_firefox(settings):
+    from dataclasses import replace
+    from hoahrb_jwts.auth_session import TeachingSession
+    from hoahrb_jwts.browser_login import export_browser_cookies
+    with TeachingSession(replace(settings, cas_cookie="TGC=remembered")) as session:
+        cookies = export_browser_cookies(session)
+    cas = next(item for item in cookies if item["name"] == "TGC")
+    assert cas["value"] == "remembered"
+    assert cas["domain"] == "ids.hit.edu.cn"
+    assert cas["secure"] is True

@@ -34,10 +34,10 @@ def test_cli_accepts_optional_benchmark_flag() -> None:
     assert args.benchmark is True
 
 
-def test_cli_accepts_no_refresh_cookie_flag() -> None:
-    args = app.build_parser().parse_args(["crawl", "--years", "2025", "--no-refresh-cookie"])
+def test_cli_accepts_relogin_flag() -> None:
+    args = app.build_parser().parse_args(["crawl", "--years", "2025", "--relogin"])
 
-    assert args.no_refresh_cookie is True
+    assert args.relogin is True
 
 
 def test_cli_accepts_grade_crawl_aliases() -> None:
@@ -76,7 +76,7 @@ def test_grade_crawl_publishes_through_gateway(
     )
 
     result = app.run_grades(
-        Namespace(data_dir=tmp_path, no_refresh_cookie=False),
+        Namespace(data_dir=tmp_path, relogin=False),
         {"HIT_JW_COOKIE": "sanitized"},
     )
 
@@ -84,7 +84,7 @@ def test_grade_crawl_publishes_through_gateway(
     assert calls == ["refresh", "grades", f"publish:{tmp_path.name}:['C001']"]
 
 
-def test_grade_crawl_persists_refreshed_dotenv_cookie_before_fetch(
+def test_grade_crawl_leaves_verified_persistence_to_gateway(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     calls: list[str] = []
@@ -110,19 +110,14 @@ def test_grade_crawl_persists_refreshed_dotenv_cookie_before_fetch(
 
     monkeypatch.setattr(app.Settings, "from_sources", lambda *args: FakeSettings())
     monkeypatch.setattr(app, "TeachingSystemClient", lambda *args, **kwargs: FakeGateway())
-    monkeypatch.setattr(
-        app,
-        "persist_dotenv_cookie",
-        lambda path, cookie: calls.append(f"persist:{path.name}:{cookie}"),
-    )
 
     with pytest.raises(AuthenticationError, match="expired"):
         app.run_grades(
-            Namespace(data_dir=tmp_path, no_refresh_cookie=False),
+            Namespace(data_dir=tmp_path, relogin=False),
             {"HIT_JW_COOKIE": "sanitized"},
         )
 
-    assert calls == ["refresh", "persist:.env:JSESSIONID=refreshed", "grades"]
+    assert calls == ["refresh", "grades"]
 
 
 def test_cli_deduplicates_years_and_calls_boundaries_in_order(
@@ -178,7 +173,7 @@ def test_cli_deduplicates_years_and_calls_boundaries_in_order(
     monkeypatch.setattr(app, "discover_plans", discover)
     monkeypatch.setattr(app, "normalize_plan", normalize)
     monkeypatch.setattr(app, "publish_plans", publish)
-    args = Namespace(years=["2025", "2024", "2025"], data_dir=tmp_path, no_refresh_cookie=False)
+    args = Namespace(years=["2025", "2024", "2025"], data_dir=tmp_path, relogin=False)
     result = app.run_crawl(args, {"HIT_JW_COOKIE": "sanitized"})
     assert result.added == 1
     assert calls == [
@@ -193,7 +188,7 @@ def test_cli_deduplicates_years_and_calls_boundaries_in_order(
     ]
 
 
-def test_crawl_persists_refreshed_dotenv_cookie_after_discovery(
+def test_crawl_does_not_overwrite_gateway_credentials_after_discovery(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     dotenv_path = tmp_path / ".env"
@@ -217,16 +212,15 @@ def test_crawl_persists_refreshed_dotenv_cookie_after_discovery(
         return ()
 
     monkeypatch.setattr(app, "TeachingSystemClient", make_client)
-    monkeypatch.setattr(app, "persist_dotenv_cookie", persist)
     monkeypatch.setattr(app, "discover_plans", discover)
     monkeypatch.setattr(
         app, "publish_plans", lambda *args, **kwargs: PublicationSummary(0, 0, 0, 0)
     )
-    args = Namespace(years=["2025"], data_dir=tmp_path, no_refresh_cookie=False)
+    args = Namespace(years=["2025"], data_dir=tmp_path, relogin=False)
 
     app.run_crawl(args, {}, dotenv_path=dotenv_path)
 
-    assert calls == ["refresh", "discover", "persist:.env:JSESSIONID=refreshed"]
+    assert calls == ["refresh", "discover"]
 
 
 def test_crawl_does_not_persist_process_environment_cookie(
@@ -245,51 +239,17 @@ def test_crawl_does_not_persist_process_environment_cookie(
 
     monkeypatch.setattr(app.Settings, "from_sources", lambda *args: FakeSettings())
     monkeypatch.setattr(app, "TeachingSystemClient", lambda *args, **kwargs: FakeGateway())
-    monkeypatch.setattr(
-        app,
-        "persist_dotenv_cookie",
-        lambda *args: (_ for _ in ()).throw(AssertionError("must not persist process Cookie")),
-    )
     monkeypatch.setattr(app, "discover_plans", lambda *args: ())
     monkeypatch.setattr(
         app, "publish_plans", lambda *args, **kwargs: PublicationSummary(0, 0, 0, 0)
     )
 
     app.run_crawl(
-        Namespace(years=["2025"], data_dir=tmp_path, no_refresh_cookie=False),
+        Namespace(years=["2025"], data_dir=tmp_path, relogin=False),
         {"HIT_JW_COOKIE": "JSESSIONID=process"},
     )
 
     assert calls == ["refresh"]
-
-
-def test_crawl_skips_refresh_and_persistence_when_requested(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    class FakeSettings:
-        cookie_source = CookieSource.DOTENV
-        cookie_file = tmp_path / ".env"
-
-    class FakeGateway:
-        def refresh_cookie(self):
-            raise AssertionError("refresh must be skipped")
-
-    monkeypatch.setattr(app.Settings, "from_sources", lambda *args: FakeSettings())
-    monkeypatch.setattr(app, "TeachingSystemClient", lambda *args, **kwargs: FakeGateway())
-    monkeypatch.setattr(
-        app,
-        "persist_dotenv_cookie",
-        lambda *args: (_ for _ in ()).throw(AssertionError("persistence must be skipped")),
-    )
-    monkeypatch.setattr(app, "discover_plans", lambda *args: ())
-    monkeypatch.setattr(
-        app, "publish_plans", lambda *args, **kwargs: PublicationSummary(0, 0, 0, 0)
-    )
-
-    app.run_crawl(
-        Namespace(years=["2025"], data_dir=tmp_path, no_refresh_cookie=True),
-        {},
-    )
 
 
 @pytest.mark.parametrize(
@@ -311,3 +271,28 @@ def test_cli_maps_expected_exit_codes(
         ["crawl", "--years", "2025", "--data-dir", "out"], {"HIT_JW_COOKIE": "sanitized"}
     )
     assert exit_code == expected
+
+
+@pytest.mark.parametrize("command", ["crawl", "grades"])
+def test_relogin_opens_browser_instead_of_normal_startup_check(monkeypatch, tmp_path, command):
+    calls = []
+    gateway = SimpleNamespace(
+        refresh_cookie=lambda: pytest.fail("normal check must be skipped"),
+        relogin=lambda: calls.append("relogin"),
+        get_grade_summary=lambda: {},
+    )
+    monkeypatch.setattr(app.Settings, "from_sources", lambda *args: SimpleNamespace())
+    monkeypatch.setattr(app, "TeachingSystemClient", lambda *args, **kwargs: gateway)
+    monkeypatch.setattr(app, "discover_plans", lambda *args: ())
+    monkeypatch.setattr(
+        app, "publish_plans", lambda *args, **kwargs: PublicationSummary(0, 0, 0, 0)
+    )
+    monkeypatch.setattr(
+        app, "publish_grade_summary", lambda *args: GradePublicationSummary(0, 0, 0, 0)
+    )
+    args = Namespace(years=["2025"], data_dir=tmp_path, cache_dir=tmp_path / "cache", relogin=True)
+    if command == "crawl":
+        app.run_crawl(args, {})
+    else:
+        app.run_grades(args, {})
+    assert calls == ["relogin"]

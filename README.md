@@ -9,7 +9,7 @@
 - `grades_summary.json`：课程成绩构成及其年级变体。
 - `course_introductions.json`：培养方案中课程的中英文简介。
 
-它不会自动登录教务系统，也不会提交任何数据。正确的流程是：本地抓取 → 查看数据 diff → 人工确认后提交 `hoa-major-data`。
+它不会自动输入账号密码，也不会向教务系统提交业务数据。启动发现登录态失效且无法通过已有统一认证会话恢复时，会打开独立的 Firefox 窗口供维护者手动登录。正确的流程是：本地抓取 → 查看数据 diff → 人工确认后提交 `hoa-major-data`。
 
 ## Usage
 
@@ -19,6 +19,7 @@
 
 ```powershell
 uv sync --dev
+uv run playwright install firefox
 ```
 
 在 `hoahrb-jwts` 仓库创建本地配置：
@@ -34,11 +35,20 @@ Copy-Item .env.example .env
 | 变量 | 必需 | 说明 |
 | --- | --- | --- |
 | `HIT_JW_COOKIE` | 是 | 已登录教务系统会话的完整 Cookie |
+| `HIT_JW_CAS_COOKIE` | 否 | 统一认证站自己的 Cookie，供教务会话失效时换票 |
 | `HIT_JW_BASE_URL` | 否 | 教务系统地址，默认 `http://jwts.hit.edu.cn` |
 | `HTTP_PROXY` / `HTTPS_PROXY` | 否 | 访问教务系统所需的代理 |
 | `HIT_JW_TIMEOUT_SECONDS` | 否 | 单次请求超时，默认 20 秒 |
 | `HIT_JW_DELAY_SECONDS` | 否 | 连续请求间隔，默认 0.1 秒 |
 | `HIT_JW_MAX_RETRIES` | 否 | 可重试请求次数，默认 3 次 |
+
+### 认证恢复与持久化
+
+启动先验证当前教务会话，有效时不请求 `/loginCAS`。业务请求遇到明确的认证要求时，最多恢复一次并重试一次；只允许配置的教务站点与学校 HTTPS 统一认证站，最多 8 跳。Cookie 按域、路径、Secure 和有效期发送，支持服务端删除指令；不会把教务 Cookie 转发给统一认证站。脚本或 meta 登录跳转按认证失败处理，不当作 JSON 解析错误。网络故障、HTTP 403 和 HTTPS 证书错误不会弹出登录窗口。
+
+需要人工登录时使用 Playwright 配套 Firefox，与个人 Firefox 配置分离。请在窗口内自行完成登录和验证码；验证业务页面后才导入、持久化 Cookie 并关闭窗口。不读取个人浏览器凭据、不保存密码。需要先执行 `uv run playwright install firefox`，并有桌面会话；关闭窗口或等待超过 5 分钟时退出认证流程。运行中的查询不会反复打开浏览器。`--relogin` 主动打开 Firefox 重新认证，并复用已保存的两站 Cookie；统一认证仍有效时可自动跳回，验证成功后保存并关闭窗口。
+
+文件来源的凭据通过 `.env` 与 `.env.cookies.json` 保存：前者保留兼容 Cookie 头，后者保存两站 Cookie 的完整属性。保存采用原子替换、写入锁和版本检查，保留注释、换行和 BOM，并拒绝覆盖人工或其他进程的新凭据。手动修改 Cookie 或站点后，旧缓存失效。业务验证成功就保存，避免长任务稍后失败时丢失有效刷新。缓存业务响应不能验证会话；进程环境凭据不写入文件。认证文件和写入临时文件均已被 Git 忽略。
 
 ### 命令概览
 
@@ -58,10 +68,7 @@ uv run jwts --version
 | 选项 | 说明 |
 | --- | --- |
 | `--data-dir PATH` | 输出目录；向 `hoa-major-data` 写入数据时应指向该仓库根目录 |
-| `--no-refresh-cookie` | 跳过 CAS 会话刷新，原样使用 `.env` 中的 Cookie |
-| `--benchmark` | 完成后打印本次抓取耗时 |
-
-`crawl` 还要求通过 `--years 20XX [20XX ...]` 指定一个或多个年级。例如：
+| `--relogin` 主动打开 Firefox 重新认证，并复用已保存的两站 Cookie；统一认证仍有效时可自动跳回，验证成功后保存并关闭窗口。例如：
 
 ```powershell
 uv run jwts crawl --years 2024 2025 --data-dir ..\hoa-major-data --benchmark
@@ -76,7 +83,7 @@ uv run jwts grades --data-dir ..\hoa-major-data
 无标签记录中，专业段以 `M` 开头的归入微专业，学院代码后可带两位年份且随后
 以 `L` 开头的分流大类归入本科，其余归入未分类。
 
-默认情况下，抓取开始前会请求教务系统的 CAS 地址探测现有会话。该请求不一定返回新的 Cookie：没有更新时继续使用当前 Cookie；返回更新时立即更新正在工作的 HTTP 会话，并用它完成本次抓取。实际认证状态由后续业务接口验证。抓取成功后，如果 Cookie 来自 `.env` 且确实发生变化，才会原样保留其他配置和注释并更新其中的 `HIT_JW_COOKIE`；更新后的值会写成双引号包裹的 dotenv 格式，但请求仍使用不带外层引号的 Cookie 值。若需要排查会话问题、坚持使用填写的 Cookie，可加 `--no-refresh-cookie` 跳过这一步。工具不会自动登录，也不会把 Cookie 写入版本库。
+默认情况下，抓取开始前会请求教务系统的 CAS 地址探测现有会话。该请求不一定返回新的 Cookie：没有更新时继续使用当前 Cookie；返回更新时立即更新正在工作的 HTTP 会话，并用它完成本次抓取。实际认证状态由后续业务接口验证。抓取成功后，如果 Cookie 来自 `.env` 且确实发生变化，才会原样保留其他配置和注释并更新其中的 `HIT_JW_COOKIE`；更新后的值会写成双引号包裹的 dotenv 格式，但请求仍使用不带外层引号的 Cookie 值。若需要排查会话问题、坚持使用填写的 Cookie，可加 `--relogin` 主动打开 Firefox 重新认证，并复用已保存的两站 Cookie；统一认证仍有效时可自动跳回，验证成功后保存并关闭窗口。工具不会自动登录，也不会把 Cookie 写入版本库。
 
 `crawl` 会替换指定年级的 `major_mapping.json` 条目和计划文件，并按本次计划中实际出现的课程代码去重抓取中英文课程简介。本次涉及的课程会增量更新到 `course_introductions.json`，未涉及的已有课程保持不变；它不会改动 `grades_summary.json`。成绩构成由下面的独立命令抓取。
 

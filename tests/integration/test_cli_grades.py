@@ -4,6 +4,7 @@ from pathlib import Path
 import responses
 
 from hoahrb_jwts.app import main
+from tests.helpers import load_fixture
 
 
 @responses.activate
@@ -34,6 +35,7 @@ def test_grades_command_publishes_grades_summary(tmp_path: Path) -> None:
         status=200,
     )
 
+    responses.get("http://jwts.hit.edu.cn/zxjh/queryZxkc", body=load_fixture("catalog_authenticated.html"))
     data_dir = tmp_path / "major-data"
     exit_code = main(
         ["crawl-grades", "--data-dir", str(data_dir)],

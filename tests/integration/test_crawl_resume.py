@@ -95,9 +95,9 @@ def test_crawl_resumes_after_failure_or_can_start_fresh(
     assert app.main(command + (["--fresh"] if fresh else []), environ) == 0
     resumed = responses.calls[previous_count:]
     paths = [urlparse(call.request.url).path for call in resumed]
-    assert paths.count("/loginCAS") == 1
+    assert paths.count("/loginCAS") == 0
     assert paths.count("/pub/queryYxzyList_x") == (2 if fresh else int(failure == "plan"))
-    assert paths.count("/zxjh/queryZxkc") == (3 if fresh else int(failure == "plan"))
+    assert paths.count("/zxjh/queryZxkc") == 1 + (3 if fresh else int(failure == "plan"))
     assert paths.count("/pub/queryKcxxView") == (
         3 if fresh or failure == "plan" else 2 if failure == "introduction" else 0
     )
