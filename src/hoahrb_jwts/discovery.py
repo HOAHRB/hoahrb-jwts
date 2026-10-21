@@ -38,21 +38,17 @@ def _same_plan(left: DiscoveredPlan, right: DiscoveredPlan) -> bool:
     ) == _deduplicate_courses(right.courses, right.major)
 
 
-def _is_redundant_w_variant(
-    plan: DiscoveredPlan, discovered: dict[tuple[str, str], DiscoveredPlan]
-) -> bool:
-    code = plan.major.code
-    if not code.endswith("W"):
-        return False
-    base = discovered.get((plan.major.year, code[:-1]))
-    # A W-suffixed plan is published only when it adds courses not already
-    # present in its same-cohort, non-W counterpart.
-    return base is not None and set(plan.courses).issubset(base.courses)
-
-
-def _curate_major_name(major: Major) -> Major:
+def _curate_major(major: Major) -> Major:
     rule = rule_for(major.year, major.code)
-    return replace(major, name=rule.name) if rule is not None and rule.name else major
+    if rule is not None and rule.name:
+        major = replace(major, name=rule.name)
+    if rule is not None and rule.category:
+        major = replace(major, category=rule.category)
+    if rule is not None and rule.filename_name:
+        major = replace(major, filename_name=rule.filename_name)
+    if major.code.endswith("W") and "威海拔尖班" not in major.name:
+        major = replace(major, name=f"{major.name}（威海拔尖班）")
+    return major
 
 
 def discover_plans(
@@ -79,7 +75,7 @@ def discover_plans(
         for department in catalog.departments:
             majors = gateway.get_majors(year, department)
             for major in majors:
-                major = _curate_major_name(major)
+                major = _curate_major(major)
                 if major.year != year:
                     raise ValidationError(
                         f"major {major.code} is scoped to {major.year}, not requested year {year}"
@@ -128,7 +124,7 @@ def discover_plans(
 
     return tuple(
         sorted(
-            (plan for plan in discovered.values() if not _is_redundant_w_variant(plan, discovered)),
+            discovered.values(),
             key=lambda plan: (plan.major.year, plan.major.code, plan.major.department_code),
         )
     )

@@ -97,23 +97,56 @@ def test_publish_keeps_same_name_plans_in_different_categories(tmp_path: Path) -
     assert result.added == 2
     plans_dir = data_dir / "plans"
     assert (plans_dir / "辅修_2025_人文社科学部_计算机科学与技术.toml").exists()
-    assert (
-        plans_dir / "本科国际生_2025_人文社科学部_计算机科学与技术_13BY031.toml"
-    ).exists()
+    assert (plans_dir / "本科国际生_2025_人文社科学部_计算机科学与技术_13BY031.toml").exists()
 
 
-def test_publish_reports_both_codes_for_same_category_filename_collision(
+def test_publish_appends_codes_for_same_category_filename_collision(
     tmp_path: Path,
 ) -> None:
-    with pytest.raises(ValidationError, match=r"01041.*01042"):
-        publish_plans(
+    for plans in (
+        (
+            plan(year="2024", code="01041", name="自动化"),
+            plan(year="2024", code="01042", name="自动化"),
+        ),
+        (
+            plan(year="2024", code="01042", name="自动化"),
+            plan(year="2024", code="01041", name="自动化"),
+        ),
+    ):
+        summary = publish_plans(
             tmp_path / "major-data",
-            (
-                plan(year="2024", code="01041", name="自动化"),
-                plan(year="2024", code="01042", name="自动化"),
-            ),
+            plans,
             {"2024"},
         )
+        assert summary.filename_fallbacks == (
+            "本_2024_人文社科学部_自动化_01041.toml",
+            "本_2024_人文社科学部_自动化_01042.toml",
+        )
+        assert {path.name for path in (tmp_path / "major-data" / "plans").glob("*.toml")} == {
+            "本_2024_人文社科学部_自动化_01041.toml",
+            "本_2024_人文社科学部_自动化_01042.toml",
+        }
+        for path in (tmp_path / "major-data" / "plans").glob("*.toml"):
+            info = toml.load(path)["info"]
+            assert info["major_name"] == f"自动化（{info['major_code']}）"
+            mapping = json.loads(
+                (tmp_path / "major-data" / "major_mapping.json").read_text(encoding="utf-8")
+            )
+            assert mapping["2024"][info["major_code"]]["name"] == info["major_name"]
+
+
+def test_publish_can_disable_filename_fallback(tmp_path: Path) -> None:
+    marker = tmp_path / "major_mapping.json"
+    marker.write_text("{}", encoding="utf-8")
+    with pytest.raises(ValidationError, match=r"01041.*01042"):
+        publish_plans(
+            tmp_path,
+            (plan(code="01041", name="自动化"), plan(code="01042", name="自动化")),
+            {"2025"},
+            allow_filename_fallback=False,
+        )
+    assert marker.read_text(encoding="utf-8") == "{}"
+    assert not (tmp_path / "plans").exists()
 
 
 def test_publish_rejects_unknown_plan_category(tmp_path: Path) -> None:

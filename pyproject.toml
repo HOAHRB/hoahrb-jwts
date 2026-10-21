@@ -8,6 +8,7 @@ license = { text = "MIT" }
 authors = [{ name = "HITSZ-OpenAuto" }]
 keywords = ["hit", "education", "courses", "curriculum", "teaching-plan"]
 dependencies = [
+    "certifi>=2026.10.19",
     "beautifulsoup4>=4.13.0",
     "python-dotenv>=1.0.0",
     "requests>=2.32.0",

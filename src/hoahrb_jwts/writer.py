@@ -7,8 +7,9 @@ import os
 import re
 import shutil
 import tempfile
+from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import toml
@@ -27,6 +28,7 @@ class PublicationSummary:
     removed: int
     unchanged: int
     introductions: IntroductionPublicationSummary | None = None
+    filename_fallbacks: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -47,7 +49,9 @@ class GradePublicationSummary:
 
 def _plan_filename(plan: NormalizedPlan) -> str:
     safe_school_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "-", plan.school_name).rstrip(" .")
-    safe_major_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "-", plan.major_name).rstrip(" .")
+    safe_major_name = re.sub(
+        r'[<>:"/\\|?*\x00-\x1f]', "-", plan.filename_name or plan.major_name
+    ).rstrip(" .")
     if not safe_school_name or not safe_major_name:
         raise ValidationError(f"major {plan.year}/{plan.major_code} has no usable filename")
     if plan.category not in {"本", "辅修", "第二学士学位", "本科国际生", "微专业", "未分类"}:
@@ -66,7 +70,9 @@ def _plan_filename(plan: NormalizedPlan) -> str:
 
 
 def _validate_plans(
-    plans: Sequence[NormalizedPlan], requested_years: set[str] | None = None
+    plans: Sequence[NormalizedPlan],
+    requested_years: set[str] | None = None,
+    allow_filename_fallback: bool = True,
 ) -> tuple[dict[str, object], dict[str, NormalizedPlan]]:
     if not plans:
         raise ValidationError("no normalized execution plans to publish")
@@ -78,8 +84,6 @@ def _validate_plans(
 
     seen_ids: set[str] = set()
     seen_identities: set[tuple[str, str]] = set()
-    seen_filenames: dict[str, NormalizedPlan] = {}
-    plan_files: dict[str, NormalizedPlan] = {}
     mapping: dict[str, dict[str, object]] = {}
     for plan in plans:
         identity = (plan.year, plan.major_code)
@@ -93,20 +97,11 @@ def _validate_plans(
         if plan.plan_id != expected_id:
             raise ValidationError(f"plan ID is not deterministic for {plan.year}/{plan.major_code}")
 
-        filename = _plan_filename(plan)
-        if filename in seen_filenames:
-            existing = seen_filenames[filename]
-            raise ValidationError(
-                f"duplicate generated filename: {filename} "
-                f"({existing.year}/{existing.major_code} and {plan.year}/{plan.major_code})"
-            )
         if not plan.courses or len(plan.courses) != len(set(plan.courses)):
             raise ValidationError(f"duplicate course entries in plan {plan.year}/{plan.major_code}")
 
         seen_ids.add(plan.plan_id)
         seen_identities.add(identity)
-        seen_filenames[filename] = plan
-        plan_files[filename] = plan
         mapping.setdefault(plan.year, {})[plan.major_code] = {
             "name": plan.major_name,
             "plan_ID": plan.plan_id,
@@ -114,6 +109,45 @@ def _validate_plans(
             "majors": [],
         }
 
+    original_filenames = [_plan_filename(plan) for plan in plans]
+    filenames = list(original_filenames)
+    safe_codes = [re.sub(r"[^\w-]", "-", plan.major_code) for plan in plans]
+    # Resolve every member together so input order cannot choose a winner.
+    # Repeat in case a suffixed name collides with another original name.
+    for _ in range(len(plans)):
+        counts = Counter(filename.casefold() for filename in filenames)
+        if max(counts.values()) == 1:
+            break
+        if not allow_filename_fallback:
+            collision = next(name for name, count in counts.items() if count > 1)
+            conflicting = [
+                f"{plan.year}/{plan.major_code}"
+                for plan, filename in zip(plans, filenames, strict=True)
+                if filename.casefold() == collision
+            ]
+            raise ValidationError(
+                f"duplicate generated filename: {collision} ({' and '.join(conflicting)})"
+            )
+        filenames = [
+            f"{filename[:-5]}_{code}.toml" if counts[filename.casefold()] > 1 else filename
+            for code, filename in zip(safe_codes, filenames, strict=True)
+        ]
+    if len({filename.casefold() for filename in filenames}) != len(filenames):
+        raise ValidationError("could not generate unique filenames from major codes")
+    plan_files = {}
+    name_counts = Counter(
+        (plan.year, plan.category, plan.school_name, plan.major_name) for plan in plans
+    )
+    for filename, original_filename, plan in zip(filenames, original_filenames, plans, strict=True):
+        if filename != original_filename and (
+            plan.filename_name is None
+            or name_counts[(plan.year, plan.category, plan.school_name, plan.major_name)] > 1
+        ):
+            suffix = f"（{plan.major_code}）"
+            if not plan.major_name.endswith(suffix):
+                plan = replace(plan, major_name=plan.major_name + suffix)
+            mapping[plan.year][plan.major_code]["name"] = plan.major_name
+        plan_files[filename] = plan
     sorted_mapping = {
         year: {code: mapping[year][code] for code in sorted(mapping[year])}
         for year in sorted(mapping)
@@ -232,12 +266,21 @@ def publish_plans(
     plans: Sequence[NormalizedPlan],
     requested_years: set[str],
     introductions: CourseIntroductions | None = None,
+    allow_filename_fallback: bool = True,
 ) -> PublicationSummary:
     """Validate and atomically replace generated files for requested years."""
 
     if not requested_years:
         raise ValidationError("at least one requested year is required")
-    generated_mapping, generated_files = _validate_plans(plans, requested_years)
+    generated_mapping, generated_files = _validate_plans(
+        plans, requested_years, allow_filename_fallback=allow_filename_fallback
+    )
+    original_filenames = {(plan.year, plan.major_code): _plan_filename(plan) for plan in plans}
+    filename_fallbacks = tuple(
+        filename
+        for filename, plan in generated_files.items()
+        if filename != original_filenames[(plan.year, plan.major_code)]
+    )
     data_dir = Path(data_dir)
     mapping_path = data_dir / "major_mapping.json"
     plans_path = data_dir / "plans"
@@ -347,6 +390,7 @@ def publish_plans(
                 summary.removed,
                 summary.unchanged,
                 introduction_summary,
+                filename_fallbacks,
             )
     except PublicationError:
         raise

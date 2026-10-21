@@ -37,7 +37,7 @@ Copy-Item .env.example .env
 | `HIT_JW_BASE_URL` | 否 | 教务系统地址，默认 `http://jwts.hit.edu.cn` |
 | `HTTP_PROXY` / `HTTPS_PROXY` | 否 | 访问教务系统所需的代理 |
 | `HIT_JW_TIMEOUT_SECONDS` | 否 | 单次请求超时，默认 20 秒 |
-| `HIT_JW_DELAY_SECONDS` | 否 | 连续请求间隔，默认 0.2 秒 |
+| `HIT_JW_DELAY_SECONDS` | 否 | 连续请求间隔，默认 0.1 秒 |
 | `HIT_JW_MAX_RETRIES` | 否 | 可重试请求次数，默认 3 次 |
 
 ### 命令概览
@@ -97,11 +97,27 @@ git -C ..\hoa-major-data status --short
 git -C ..\hoa-major-data diff -- major_mapping.json plans
 ```
 
+## 中断后继续抓取
+
+`crawl` 默认逐页缓存教学计划、逐门缓存课程简介。网络中断、Ctrl+C 或发布校验失败后，直接重跑相同命令即可继续；保持相同的 `--data-dir` 和年级集合，已成功抓取并解析的响应会显示 `checkpoint hit`，无需再次请求。修改专业名称规则后也会重新解析缓存并应用新规则。
+
+缓存默认位于本项目的 `.cache/jwts/`（已由 Git 忽略），不保存 Cookie 或响应头。发布成功后自动清理本次缓存，下次正常抓取会获取最新数据。此前版本没有缓存，旧运行的进度无法恢复。
+
+需要丢弃未完成的进度、全部重新抓取时，在原命令后加 `--fresh`；可用 `--cache-dir <目录>` 指定缓存位置。此功能适用于 `crawl`，不包含 `grades`。
+
 ## 修正专业名称或跳过记录
+
+规则依据、2+X 领域的课程识别方法及未确认例外见 [专业规则依据与复查](docs/major-rules.md)。
+
+同名方案冲突时，兜底文件继续使用 `_专业代码.toml` 格式，例如 `本_2023_未来技术学院_精密仪器_52WL014Z.toml`；数据中的专业名称追加中文括号包裹的代码，例如 `精密仪器（52WL014Z）`，并同步到 `major_mapping.json`。不冲突的名称保持不变，不合并课程或绕过 `publish = false` 规则。
+
+添加 `--no-filename-fallback` 可禁用兜底，同名冲突时停止发布并保留断点缓存。成功运行末尾会打印 `filename fallbacks: files=N` 和本次发布范围内所有兜底文件名；没有兜底时显示 `files=0`。国际生 Y 代码原有的固定后缀不计入兜底数量。
+
+专业代码以 `W` 结尾表示威海拔尖班，程序会在名称缺少该班型时自动追加 `（威海拔尖班）`。普通班与威海拔尖班分别保留，即使课程完全相同也不合并。
 
 教务系统偶尔会漏掉班型名称，或返回不应发布的记录。这些例外写在 `src/hoahrb_jwts/major_rules.toml`，不要写进 Python 代码。
 
-每条规则必须同时写 `year` 和 `code`，所以只会影响对应年级的对应专业。例如：
+每条规则必须同时写 `year` 和 `code`。`year = "*"` 表示所有年级；指定年级的规则优先于该代码的通用规则。例如：
 
 ```toml
 [[rules]]
@@ -117,9 +133,11 @@ publish = false
 reason = "与 01182 的方案重复，且来源没有独立名称"
 ```
 
-- `year`：一个年级，或多个年级组成的列表；
+- `year`：一个年级、多个年级组成的列表，或 `"*"` 表示所有年级；
 - `code`：教务系统返回的专业代码；
 - `name`：仅在需要覆盖教务系统名称时填写；
+- `category`：仅在需要覆盖来源误标的专业类别时填写，例如 `"本科国际生"`；
+- `filename_name`：仅在需要保持原文件命名时填写；独立于数据中的 `name`，同名文件仍使用 `_专业代码.toml` 消歧义；
 - `publish = false`：不生成这条记录；
 - `reason`：写明判断依据，便于后续维护。
 

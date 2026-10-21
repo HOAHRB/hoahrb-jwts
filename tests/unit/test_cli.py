@@ -153,7 +153,7 @@ def test_cli_deduplicates_years_and_calls_boundaries_in_order(
         calls.append("settings")
         return FakeSettings()
 
-    def make_client(settings, on_progress):
+    def make_client(settings, on_progress, checkpoint):
         calls.append("client")
         assert on_progress is app._print_progress
         return FakeGateway()
@@ -166,7 +166,8 @@ def test_cli_deduplicates_years_and_calls_boundaries_in_order(
         calls.append(f"normalize:{value}")
         return normalized[value]
 
-    def publish(data_dir, plans, years, introductions):
+    def publish(data_dir, plans, years, introductions, allow_filename_fallback=True):
+        assert allow_filename_fallback is True
         calls.append(
             f"publish:{data_dir.name}:{sorted(years)}:{len(plans)}:{sorted(introductions)}"
         )
@@ -204,7 +205,7 @@ def test_crawl_persists_refreshed_dotenv_cookie_after_discovery(
             calls.append("refresh")
             return "JSESSIONID=refreshed"
 
-    def make_client(settings, on_progress):
+    def make_client(settings, on_progress, checkpoint):
         assert settings.cookie_source is CookieSource.DOTENV
         return FakeGateway()
 
@@ -218,7 +219,9 @@ def test_crawl_persists_refreshed_dotenv_cookie_after_discovery(
     monkeypatch.setattr(app, "TeachingSystemClient", make_client)
     monkeypatch.setattr(app, "persist_dotenv_cookie", persist)
     monkeypatch.setattr(app, "discover_plans", discover)
-    monkeypatch.setattr(app, "publish_plans", lambda *args: PublicationSummary(0, 0, 0, 0))
+    monkeypatch.setattr(
+        app, "publish_plans", lambda *args, **kwargs: PublicationSummary(0, 0, 0, 0)
+    )
     args = Namespace(years=["2025"], data_dir=tmp_path, no_refresh_cookie=False)
 
     app.run_crawl(args, {}, dotenv_path=dotenv_path)
@@ -248,7 +251,9 @@ def test_crawl_does_not_persist_process_environment_cookie(
         lambda *args: (_ for _ in ()).throw(AssertionError("must not persist process Cookie")),
     )
     monkeypatch.setattr(app, "discover_plans", lambda *args: ())
-    monkeypatch.setattr(app, "publish_plans", lambda *args: PublicationSummary(0, 0, 0, 0))
+    monkeypatch.setattr(
+        app, "publish_plans", lambda *args, **kwargs: PublicationSummary(0, 0, 0, 0)
+    )
 
     app.run_crawl(
         Namespace(years=["2025"], data_dir=tmp_path, no_refresh_cookie=False),
@@ -277,7 +282,9 @@ def test_crawl_skips_refresh_and_persistence_when_requested(
         lambda *args: (_ for _ in ()).throw(AssertionError("persistence must be skipped")),
     )
     monkeypatch.setattr(app, "discover_plans", lambda *args: ())
-    monkeypatch.setattr(app, "publish_plans", lambda *args: PublicationSummary(0, 0, 0, 0))
+    monkeypatch.setattr(
+        app, "publish_plans", lambda *args, **kwargs: PublicationSummary(0, 0, 0, 0)
+    )
 
     app.run_crawl(
         Namespace(years=["2025"], data_dir=tmp_path, no_refresh_cookie=True),

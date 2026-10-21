@@ -14,6 +14,8 @@ class MajorRule:
     publish: bool = True
     name: str | None = None
     reason: str = ""
+    category: str | None = None
+    filename_name: str | None = None
 
 
 @cache
@@ -22,17 +24,20 @@ def _rules_by_id() -> dict[tuple[str, str], MajorRule]:
     rules: dict[tuple[str, str], MajorRule] = {}
     for item in payload.get("rules", []):
         raw_years = item["year"]
-        years = (raw_years,) if isinstance(raw_years, int) else tuple(raw_years)
+        years = (raw_years,) if isinstance(raw_years, (int, str)) else tuple(raw_years)
         rule = MajorRule(
             years=tuple(str(year) for year in years),
             code=item["code"],
             publish=item.get("publish", True),
             name=item.get("name"),
             reason=item.get("reason", ""),
+            category=item.get("category"),
+            filename_name=item.get("filename_name"),
         )
         rules.update({(year, rule.code): rule for year in rule.years})
     return rules
 
 
 def rule_for(year: str, code: str) -> MajorRule | None:
-    return _rules_by_id().get((year, code))
+    rules = _rules_by_id()
+    return rules.get((year, code)) or rules.get(("*", code))

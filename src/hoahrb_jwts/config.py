@@ -45,7 +45,7 @@ class Settings:
 
         try:
             timeout_seconds = float(environ.get("HIT_JW_TIMEOUT_SECONDS", "20"))
-            delay_seconds = float(environ.get("HIT_JW_DELAY_SECONDS", "0.2"))
+            delay_seconds = float(environ.get("HIT_JW_DELAY_SECONDS", "0.1"))
             max_retries = int(environ.get("HIT_JW_MAX_RETRIES", "3"))
         except ValueError as exc:
             raise ConfigError(

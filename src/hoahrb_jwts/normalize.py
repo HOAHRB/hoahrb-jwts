@@ -106,6 +106,7 @@ def normalize_plan(plan: DiscoveredPlan) -> NormalizedPlan:
         school_name=school_name,
         category=category,
         plan_id=f"HIT-{year}-{major_code}",
+        filename_name=major.filename_name,
         courses=normalized_courses,
     )
 

@@ -84,7 +84,7 @@ def test_identical_duplicate_course_rows_collapse() -> None:
 
 
 @pytest.mark.parametrize("code", ["01182L", "35E233"])
-def test_discovery_skips_explicitly_ignored_major_code(code: str) -> None:
+def test_discovery_preserves_previously_ignored_distinct_plans(code: str) -> None:
     class IgnoredMajorGateway(FakeGateway):
         def get_majors(self, year: str, department: Department) -> tuple[Major, ...]:
             if year == "2024" and department.code == "35":
@@ -92,10 +92,50 @@ def test_discovery_skips_explicitly_ignored_major_code(code: str) -> None:
             return ()
 
         def get_plan(self, major: Major) -> tuple[SourceCourse, ...]:
-            raise AssertionError("ignored major must not be queried")
+            return (source_course(),)
 
-    with pytest.raises(ValidationError, match="no valid execution plans"):
-        discover_plans(IgnoredMajorGateway(), ("2024",))
+    plans = discover_plans(IgnoredMajorGateway(), ("2024",))
+    assert [plan.major.code for plan in plans] == [code]
+
+
+def test_future_field_names_preserve_filename_and_mapping(tmp_path) -> None:
+    from hoahrb_jwts.normalize import normalize_plan
+    from hoahrb_jwts.writer import publish_plans
+
+    class FutureGateway(FakeGateway):
+        def get_catalog(self) -> Catalog:
+            return Catalog(("2023",), (Department("52", "未来技术学院"),))
+
+        def get_majors(self, year: str, department: Department) -> tuple[Major, ...]:
+            return tuple(
+                Major(year, "52", department.name, code, "精密仪器")
+                for code in ("52WL014", "52WL014Z")
+            )
+
+    plans = tuple(normalize_plan(plan) for plan in discover_plans(FutureGateway(), ("2023",)))
+    summary = publish_plans(tmp_path, plans, {"2023"})
+    assert summary.filename_fallbacks == (
+        "本_2023_未来技术学院_精密仪器_52WL014.toml",
+        "本_2023_未来技术学院_精密仪器_52WL014Z.toml",
+    )
+    import json
+
+    import toml
+
+    mapping = json.loads((tmp_path / "major_mapping.json").read_text(encoding="utf-8"))
+    for code, field in (("52WL014", "人工智能领域"), ("52WL014Z", "智能制造领域")):
+        name = f"精密仪器（{field}）"
+        assert mapping["2023"][code]["name"] == name
+        assert (
+            toml.load(tmp_path / "plans" / f"本_2023_未来技术学院_精密仪器_{code}.toml")["info"][
+                "major_name"
+            ]
+            == name
+        )
+    assert rule_for("2025", "52WL014") is None
+    assert rule_for("2024", "52WL036Z") is None
+    assert rule_for("2022", "52WL190R").name == "材料科学与工程（智能制造领域）"
+    assert rule_for("2023", "52WL190RS").name == "材料科学与工程（人工智能领域）"
 
 
 def test_discovery_applies_curated_name_to_missing_class_designation() -> None:
@@ -120,9 +160,39 @@ def test_major_rules_are_scoped_to_explicit_years() -> None:
     assert rule_for("2024", "09331").name == "土木工程（土木菁华班）"
     assert rule_for("2025", "09331") is None
     assert rule_for("2025", "35158").name == "俄语（火箭系统与航天）"
+    assert rule_for("2023", "25145").category == "本科国际生"
+    assert rule_for("2024", "25145") is None
 
 
-def test_discovery_skips_only_w_variants_that_are_course_subsets() -> None:
+def test_category_rule_preserves_same_name_domestic_and_international_plans(tmp_path) -> None:
+    from hoahrb_jwts.normalize import normalize_plan
+    from hoahrb_jwts.writer import publish_plans
+
+    class ChemistryGateway(FakeGateway):
+        def get_catalog(self) -> Catalog:
+            return Catalog(("2023", "2024"), (Department("25", "化工与化学学院"),))
+
+        def get_majors(self, year: str, department: Department) -> tuple[Major, ...]:
+            return tuple(
+                Major(year, "25", department.name, code, "化学工程与工艺", "本")
+                for code in ("25142", "25145")
+            )
+
+    plans = discover_plans(ChemistryGateway(), ("2023",))
+    assert {plan.major.code: plan.major.category for plan in plans} == {
+        "25142": "本",
+        "25145": "本科国际生",
+    }
+    result = publish_plans(tmp_path, tuple(normalize_plan(plan) for plan in plans), {"2023"})
+    assert result.added == 2
+    assert (tmp_path / "plans" / "本_2023_化工与化学学院_化学工程与工艺.toml").exists()
+    assert (tmp_path / "plans" / "本科国际生_2023_化工与化学学院_化学工程与工艺.toml").exists()
+    assert all(
+        plan.major.category == "本" for plan in discover_plans(ChemistryGateway(), ("2024",))
+    )
+
+
+def test_discovery_preserves_w_variants_even_when_courses_are_subsets() -> None:
     class WVariantGateway(FakeGateway):
         def get_majors(self, year: str, department: Department) -> tuple[Major, ...]:
             if year == "2025" and department.code == "35":
@@ -142,7 +212,36 @@ def test_discovery_skips_only_w_variants_that_are_course_subsets() -> None:
 
     plans = discover_plans(WVariantGateway(), ("2025",))
 
-    assert [plan.major.code for plan in plans] == ["35158", "35159W"]
+    assert {plan.major.code: plan.major.name for plan in plans} == {
+        "35158": "俄语（火箭系统与航天）",
+        "35158W": "俄语（威海拔尖班）",
+        "35159W": "保留专业（威海拔尖班）",
+    }
+
+
+@pytest.mark.parametrize("name", ["材料成型及控制工程", "材料成型及控制工程（威海拔尖班）"])
+def test_w_variant_names_allow_both_plans_to_be_published(name: str, tmp_path) -> None:
+    from hoahrb_jwts.normalize import normalize_plan
+    from hoahrb_jwts.writer import publish_plans
+
+    class WGateway(FakeGateway):
+        def get_catalog(self) -> Catalog:
+            return Catalog(("2023",), (Department("03", "材料科学与工程学院"),))
+
+        def get_majors(self, year: str, department: Department) -> tuple[Major, ...]:
+            return (
+                Major(year, "03", department.name, "03091", "材料成型及控制工程"),
+                Major(year, "03", department.name, "03091W", name),
+            )
+
+    plans = discover_plans(WGateway(), ("2023",))
+    result = publish_plans(tmp_path, tuple(normalize_plan(plan) for plan in plans), {"2023"})
+
+    assert result.added == 2
+    assert (tmp_path / "plans" / "本_2023_材料科学与工程学院_材料成型及控制工程.toml").exists()
+    assert (
+        tmp_path / "plans" / "本_2023_材料科学与工程学院_材料成型及控制工程（威海拔尖班）.toml"
+    ).exists()
 
 
 def test_same_course_code_with_different_tracks_is_preserved() -> None:

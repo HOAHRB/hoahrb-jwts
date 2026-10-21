@@ -17,6 +17,7 @@ class Major:
     code: str
     name: str
     category: str = "本"
+    filename_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -79,3 +80,4 @@ class NormalizedPlan:
     plan_id: str
     courses: tuple[NormalizedCourse, ...]
     category: str = "本"
+    filename_name: str | None = None

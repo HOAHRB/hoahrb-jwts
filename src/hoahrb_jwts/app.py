@@ -1,4 +1,4 @@
-"""The single supported maintainer-run ``jwts crawl`` command."""
+"""Maintainer-run ``jwts`` commands for publishing HIT academic data."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
+from .checkpoint import CrawlCheckpoint
 from .client import TeachingSystemClient
 from .config import DEFAULT_DATA_DIR, CookieSource, Settings
 from .cookie_store import persist_dotenv_cookie
@@ -39,11 +40,46 @@ def _year(value: str) -> str:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="JWTS academic-plan crawler")
+    parser = argparse.ArgumentParser(
+        description="JWTS academic data crawler",
+        epilog=(
+            "Examples:\n"
+            "  jwts crawl --years 2024 2025 --data-dir ../hoa-major-data\n"
+            "    Crawl plans and generate course_introductions.json.\n"
+            "  jwts grades --data-dir ../hoa-major-data\n"
+            "    Update grades_summary.json with grade components."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--version", action="version", version="jwts")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    crawl_parser = subparsers.add_parser("crawl", help="crawl HIT execution teaching plans")
+    crawl_parser = subparsers.add_parser(
+        "crawl",
+        help="crawl teaching plans and generate course introductions",
+        description=(
+            "Crawl HIT execution teaching plans and generate or update "
+            "course_introductions.json for the courses found in those plans."
+        ),
+        epilog=("Example:\n  jwts crawl --years 2024 2025 --data-dir ../hoa-major-data"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     crawl_parser.add_argument("--years", nargs="+", required=True, type=_year)
+    crawl_parser.add_argument(
+        "--no-filename-fallback",
+        action="store_true",
+        help="fail on duplicate filenames instead of appending major codes",
+    )
+    crawl_parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=Path(__file__).resolve().parents[2] / ".cache" / "jwts",
+        help="directory for automatic crawl checkpoints",
+    )
+    crawl_parser.add_argument(
+        "--fresh",
+        action="store_true",
+        help="discard the unfinished crawl checkpoint and fetch everything again",
+    )
     crawl_parser.add_argument(
         "--data-dir",
         type=Path,
@@ -95,11 +131,18 @@ def run_crawl(
 ) -> PublicationSummary:
     years = tuple(sorted(set(args.years)))
     settings = Settings.from_sources(environ, dotenv_path or _project_dotenv_path())
-    gateway = TeachingSystemClient(settings, on_progress=_print_progress)
+    data_dir = Path(args.data_dir)
+    checkpoint = CrawlCheckpoint(
+        getattr(args, "cache_dir", Path(__file__).resolve().parents[2] / ".cache" / "jwts"),
+        data_dir,
+        years,
+    )
+    if getattr(args, "fresh", False):
+        checkpoint.clear()
+    gateway = TeachingSystemClient(settings, on_progress=_print_progress, checkpoint=checkpoint)
     refreshed_cookie: str | None = None
     if not args.no_refresh_cookie:
         refreshed_cookie = gateway.refresh_cookie()
-    data_dir = Path(args.data_dir)
     discovered = discover_plans(gateway, years)
     if (
         refreshed_cookie is not None
@@ -112,7 +155,15 @@ def run_crawl(
     normalized = tuple(normalize_plan(plan) for plan in discovered)
     course_codes = {course.course_code for plan in normalized for course in plan.courses}
     introductions = gateway.get_course_introductions(course_codes) if course_codes else {}
-    return publish_plans(data_dir, normalized, set(years), introductions)
+    summary = publish_plans(
+        data_dir,
+        normalized,
+        set(years),
+        introductions,
+        allow_filename_fallback=not getattr(args, "no_filename_fallback", False),
+    )
+    checkpoint.clear()
+    return summary
 
 
 def run_grades(
@@ -181,6 +232,10 @@ def main(argv: Sequence[str] | None = None, environ: Mapping[str, str] = os.envi
         )
     if args.benchmark:
         print(f"benchmark: crawl_seconds={time.perf_counter() - started_at:.3f}")
+    if args.command == "crawl":
+        print(f"filename fallbacks: files={len(summary.filename_fallbacks)}")
+        for filename in summary.filename_fallbacks:
+            print(f"  {filename}")
     return 0
 
 

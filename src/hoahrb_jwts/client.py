@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable, Collection
 from dataclasses import replace
 from http.cookies import SimpleCookie
-from typing import Any
+from typing import Any, TypeVar
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from .checkpoint import CrawlCheckpoint
 from .config import Settings
 from .course_introduction import CourseIntroductions, parse_course_introduction
 from .errors import AuthenticationError, ParseError, TransportError
@@ -25,6 +27,8 @@ from .grade_summary import (
 from .models import Catalog, Department, Major, PlanPage, SourceCourse
 from .parsers import parse_catalog_page, parse_major_list, parse_plan_page
 
+T = TypeVar("T")
+
 
 class TeachingSystemClient:
     """Synchronous, authenticated endpoint client used by discovery."""
@@ -34,6 +38,7 @@ class TeachingSystemClient:
         settings: Settings,
         session: requests.Session | None = None,
         on_progress: Callable[[str], None] | None = None,
+        checkpoint: CrawlCheckpoint | None = None,
     ) -> None:
         self.settings = settings
         self.session = session or requests.Session()
@@ -62,6 +67,26 @@ class TeachingSystemClient:
         self._last_request_succeeded = False
         self._on_progress = on_progress
         self._request_count = 0
+        self._checkpoint = checkpoint
+
+    def _parsed_request(
+        self, method: str, path: str, parse: Callable[[str], T], **kwargs: Any
+    ) -> T:
+        def fetch() -> str:
+            return self._request(method, path, **kwargs).text
+
+        if self._checkpoint is None:
+            return parse(fetch())
+        key = json.dumps(
+            [self._url(path), method, kwargs.get("data"), kwargs.get("params")],
+            sort_keys=True,
+        )
+
+        def on_hit() -> None:
+            if self._on_progress is not None:
+                self._on_progress(f"checkpoint hit {method} {path}")
+
+        return self._checkpoint.read_or_fetch(key, fetch, parse, on_hit)
 
     def _url(self, path: str) -> str:
         return f"{self.settings.base_url}/{path.lstrip('/')}"
@@ -177,18 +202,23 @@ class TeachingSystemClient:
             raise ParseError(f"invalid JSON during {stage}") from exc
 
     def get_catalog(self) -> Catalog:
-        response = self._request("GET", "/zxjh/queryZxkc")
-        return parse_catalog_page(response.text)
+        return self._parsed_request("GET", "/zxjh/queryZxkc", parse_catalog_page)
 
     def get_majors(self, year: str, department: Department) -> tuple[Major, ...]:
-        response = self._request(
+        def parse(text: str) -> tuple[Major, ...]:
+            try:
+                payload = json.loads(text)
+            except ValueError as exc:
+                raise ParseError("invalid JSON during major list") from exc
+            return parse_major_list(payload, year, department)
+
+        return self._parsed_request(
             "POST",
             "/pub/queryYxzyList_x",
+            parse,
             data={"yxdm": department.code, "nj": year},
             headers={"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"},
         )
-        payload = self._json(response, "major list")
-        return parse_major_list(payload, year, department)
 
     def get_plan(self, major: Major, page_size: int = 500) -> tuple[SourceCourse, ...]:
         if page_size <= 0:
@@ -207,17 +237,19 @@ class TeachingSystemClient:
             "pageSize": str(page_size),
         }
         headers = {"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"}
-        first_response = self._request("POST", "/zxjh/queryZxkc", data=filters, headers=headers)
-        first_page: PlanPage = parse_plan_page(first_response.text)
+        first_page: PlanPage = self._parsed_request(
+            "POST", "/zxjh/queryZxkc", parse_plan_page, data=filters, headers=headers
+        )
         if first_page.page_no != 1:
             raise ParseError("execution-plan first page number is not 1")
         all_courses.extend(first_page.courses)
         effective_page_size = first_page.page_size or page_size
 
         for page_no in range(2, first_page.page_count + 1):
-            response = self._request(
+            parsed = self._parsed_request(
                 "POST",
                 "/zxjh/queryZxkc",
+                parse_plan_page,
                 data={
                     **filters,
                     "pageNo": str(page_no),
@@ -226,7 +258,6 @@ class TeachingSystemClient:
                 },
                 headers=headers,
             )
-            parsed = parse_plan_page(response.text)
             if parsed.page_no != page_no:
                 raise ParseError("execution-plan page number does not match the request")
             if parsed.page_count != first_page.page_count:
@@ -239,10 +270,13 @@ class TeachingSystemClient:
 
         introductions: CourseIntroductions = {}
         for course_code in sorted(set(course_codes)):
-            response = self._request("GET", "/pub/queryKcxxView", params={"kcdm": course_code})
-            introductions[course_code] = {
-                "default": parse_course_introduction(response.text, course_code)
-            }
+            introduction = self._parsed_request(
+                "GET",
+                "/pub/queryKcxxView",
+                lambda text, course_code=course_code: parse_course_introduction(text, course_code),
+                params={"kcdm": course_code},
+            )
+            introductions[course_code] = {"default": introduction}
         return introductions
 
     def get_grade_summary(self, page_size: int = 500) -> GradeSummary:
