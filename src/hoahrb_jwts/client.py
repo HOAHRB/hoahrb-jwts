@@ -128,7 +128,7 @@ class TeachingSystemClient:
         return response
 
     def refresh_cookie(self) -> str:
-        """Verify first; recover CAS once and open Firefox only when sign-in is required."""
+        """Verify first; recover CAS once and open a browser only when sign-in is required."""
         try:
             self._auth.check_authentication()
         except LoginRequired:

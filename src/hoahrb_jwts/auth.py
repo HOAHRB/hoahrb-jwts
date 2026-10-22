@@ -56,6 +56,7 @@ def checked_target(base_url: str, current_url: str, target: str) -> str:
 
 def page_state(text: str) -> tuple[bool, str | None]:
     """Recognize interactive login and literal JS/meta navigation, without executing JS."""
+    text = text.lstrip("\ufeff \t\r\n")
     if not text.lstrip().startswith("<"):
         return False, None
     soup = BeautifulSoup(text, "html.parser")

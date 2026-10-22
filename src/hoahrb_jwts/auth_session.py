@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 
 from .auth import MAX_REDIRECTS, checked_target, page_state
 from .config import Settings
+from .diagnostics import endpoint, logger
 from .errors import AuthenticationError, ConfigError, LoginRequired, TransportError
 from .session_store import SessionCookieStore
 
@@ -37,6 +38,16 @@ class TeachingSession:
             if settings.cookie_file is not None:
                 self._store = SessionCookieStore(settings.cookie_file, settings.base_url)
                 self._store.restore(self._client.cookies)
+            logger.info(
+                "session_loaded teaching_cookies=%d cas_cookies=%d",
+                *(
+                    sum(
+                        not c.is_expired() and c.domain.lstrip(".") == domain
+                        for c in self._client.cookies
+                    )
+                    for domain in (urlsplit(settings.base_url).hostname, "ids.hit.edu.cn")
+                ),
+            )
         except Exception:
             self._client.close()
             raise
@@ -99,8 +110,17 @@ class TeachingSession:
                 proxies=self.settings.proxies,
                 allow_redirects=False,
             )
-        except requests.RequestException:
+        except requests.RequestException as exc:
+            logger.warning("request_transport_failed type=%s", type(exc).__name__)
             raise TransportError("teaching system request failed") from None
+        logger.info(
+            "response method=%s endpoint=%s status=%d bytes=%d set_cookie_present=%s",
+            method,
+            endpoint(response.url),
+            response.status_code,
+            len(response.content),
+            "Set-Cookie" in response.headers,
+        )
         if response.status_code == 401:
             raise _NeedsAuthentication("teaching session requires authentication")
         if response.status_code == 403:
@@ -119,6 +139,7 @@ class TeachingSession:
         for _ in range(MAX_REDIRECTS + 1):
             interactive, script_target = page_state(response.text)
             target = response.headers.get("Location") if response.is_redirect else script_target
+            logger.info("navigation interactive=%s redirect=%s", interactive, bool(target))
             if response.is_redirect and not target:
                 raise AuthenticationError("教务跳转缺少目标地址")
             if target:
@@ -142,6 +163,7 @@ class TeachingSession:
 
     def refresh_cookie(self) -> None:
         """Bounded CAS navigation; never submit a login form or persist unverified cookies."""
+        logger.info("cas_recovery_started")
         url = urljoin(self.settings.base_url + "/", "/loginCAS")
         visited = set()
         for _ in range(MAX_REDIRECTS + 1):
@@ -151,8 +173,10 @@ class TeachingSession:
             response = self._send("GET", url)
             interactive, script_target = page_state(response.text)
             if interactive:
+                logger.warning("cas_interactive_login_required")
                 raise LoginRequired("认证需要人工重新登录，请更新教务或统一认证 Cookie")
             target = response.headers.get("Location") if response.is_redirect else script_target
+            logger.info("navigation interactive=%s redirect=%s", interactive, bool(target))
             if response.is_redirect and not target:
                 raise AuthenticationError("认证跳转缺少目标地址")
             if not target:
@@ -160,6 +184,7 @@ class TeachingSession:
                     raise LoginRequired("统一认证未返回教务系统，需要人工重新登录")
                 return
             url = checked_target(self.settings.base_url, str(response.url), target)
+            logger.info("cas_redirect endpoint=%s", endpoint(url))
         raise AuthenticationError("认证跳转超过次数限制")
 
     def _read(self, method: str, path: str, *, refresh: bool, **kwargs):
@@ -167,6 +192,7 @@ class TeachingSession:
         try:
             return self._request(method, path, **kwargs)
         except _NeedsAuthentication:
+            logger.info("business_auth_required recovery_enabled=%s", refresh)
             if not refresh:
                 raise LoginRequired("教务会话需要认证，已禁用自动恢复") from None
         self.refresh_cookie()
@@ -187,11 +213,13 @@ class TeachingSession:
         ):
             raise AuthenticationError("未识别到已登录页面，Cookie 有效性尚未确认")
         self._verified = True
+        logger.info("authentication_verified")
         self.persist_verified_cookie()
 
     def persist_verified_cookie(self) -> None:
-        """仅允许已验证会话回写文件；进程环境提供的 Cookie 不回写。"""
+        """仅允许已验证会话写入独立 JSON。"""
         if not self._verified:
             raise AuthenticationError("尚未成功验证会话，不能持久化 Cookie")
         if self._store is not None:
             self._store.save(self._client.cookies)
+            logger.info("verified_session_saved")

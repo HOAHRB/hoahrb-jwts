@@ -13,16 +13,25 @@ AUTHENTICATION_LOCK = threading.RLock()
 
 
 def launch_login_browser(runtime, launch_options: dict):
-    """Prefer Firefox; fall back only when the installed engine cannot launch."""
+    """Prefer installed system browsers; never download a browser automatically."""
     from playwright.sync_api import Error as BrowserError
 
-    for name in ("firefox", "chromium", "webkit"):
+    candidates = (
+        ("chromium", "msedge"),
+        ("chromium", "chrome"),
+        ("chromium", None),
+        ("webkit", None),
+    )
+    for name, channel in candidates:
         try:
-            return getattr(runtime, name).launch(**launch_options)
+            options = dict(launch_options)
+            if channel:
+                options["channel"] = channel
+            return getattr(runtime, name).launch(**options)
         except BrowserError:
             continue
     raise ConfigError(
-        "没有可启动的浏览器，请运行 uv run playwright install firefox 并确认存在桌面会话"
+        "没有可启动的浏览器；可使用已安装的 Edge/Chrome，或运行 uv run playwright install chromium，并确认存在桌面会话"
     )
 
 
@@ -82,7 +91,7 @@ def export_browser_cookies(session: TeachingSession) -> list[dict]:
 def browser_login(settings: Settings, *, timeout_seconds: float = 300) -> None:
     """Use an available isolated browser; verify cookies before writing any file."""
     if settings.cookie_file is None:
-        raise ConfigError("浏览器登录需要文件来源的配置，进程环境凭据无法持久化")
+        raise ConfigError("浏览器登录需要已配置的会话文件路径")
     try:
         from playwright.sync_api import Error as BrowserError
         from playwright.sync_api import sync_playwright

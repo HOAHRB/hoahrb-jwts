@@ -121,7 +121,7 @@ def test_failed_login_does_not_write_cookie(settings, tmp_path):
 
 
 @responses.activate
-def test_startup_login_opens_firefox_only_for_login_required(settings, monkeypatch):
+def test_startup_login_opens_browser_only_for_login_required(settings, monkeypatch):
     from hoahrb_jwts.errors import LoginRequired
 
     responses.get("http://jwts.hit.edu.cn/zxjh/queryZxkc", status=401)
@@ -405,7 +405,7 @@ def test_get_grade_summary_posts_later_query_qmcj_pages(settings) -> None:
     }
 
 
-def test_saved_session_can_be_loaded_into_firefox(settings):
+def test_saved_session_can_be_loaded_into_browser(settings):
     from dataclasses import replace
 
     from hoahrb_jwts.auth_session import TeachingSession
@@ -428,9 +428,13 @@ def test_login_browser_fallback_and_native_user_agent():
 
     runtime = MagicMock()
     browser = launch_login_browser(runtime, {"headless": False})
-    assert browser is runtime.firefox.launch.return_value
-    runtime.chromium.launch.assert_not_called()
-    runtime.firefox.launch.side_effect = Error("not installed")
+    assert browser is runtime.chromium.launch.return_value
+    runtime.chromium.launch.assert_called_once_with(headless=False, channel="msedge")
+    runtime.firefox.launch.assert_not_called()
+    runtime.chromium.launch.side_effect = [
+        Error("Edge missing"),
+        runtime.chromium.launch.return_value,
+    ]
     assert (
         launch_login_browser(runtime, {"headless": False}) is runtime.chromium.launch.return_value
     )

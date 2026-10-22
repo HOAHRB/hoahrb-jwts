@@ -9,7 +9,7 @@
 - `grades_summary.json`：课程成绩构成及其年级变体。
 - `course_introductions.json`：培养方案中课程的中英文简介。
 
-它不会自动输入账号密码，也不会向教务系统提交业务数据。启动发现登录态失效且无法通过已有统一认证会话恢复时，会打开独立的 Firefox 窗口供维护者手动登录。正确的流程是：本地抓取 → 查看数据 diff → 人工确认后提交 `hoa-major-data`。
+它不会自动输入账号密码，也不会向教务系统提交业务数据。启动发现登录态失效且无法通过已有统一认证会话恢复时，会打开独立的浏览器窗口供维护者手动登录。正确的流程是：本地抓取 → 查看数据 diff → 人工确认后提交 `hoa-major-data`。
 
 ## Usage
 
@@ -19,7 +19,7 @@
 
 ```powershell
 uv sync --dev
-uv run playwright install firefox
+# 系统已有 Edge/Chrome 时，无需安装额外浏览器
 ```
 
 在 `hoahrb-jwts` 仓库创建本地配置：
@@ -45,7 +45,7 @@ Copy-Item .env.example .env
 
 启动先验证当前教务会话，有效时不请求 `/loginCAS`。业务请求遇到明确的认证要求时，最多恢复一次并重试一次；只允许配置的教务站点与学校 HTTPS 统一认证站，最多 8 跳。Cookie 按域、路径、Secure 和有效期发送，支持服务端删除指令；不会把教务 Cookie 转发给统一认证站。脚本或 meta 登录跳转按认证失败处理，不当作 JSON 解析错误。网络故障、HTTP 403 和 HTTPS 证书错误不会弹出登录窗口。
 
-需要人工登录时使用 Playwright 配套 Firefox，与个人 Firefox 配置分离。请在窗口内自行完成登录和验证码；验证业务页面后才导入、持久化 Cookie 并关闭窗口。不读取个人浏览器凭据、不保存密码。需要先执行 `uv run playwright install firefox`，并有桌面会话；关闭窗口或等待超过 5 分钟时退出认证流程。运行中的查询不会反复打开浏览器。`--relogin` 主动打开 Firefox 重新认证，并复用已保存的两站 Cookie；统一认证仍有效时可自动跳回，验证成功后保存并关闭窗口。
+需要人工登录时优先通过 Playwright 复用系统 Edge/Chrome，使用独立登录上下文。请在窗口内自行完成登录和验证码；验证业务页面后才导入、持久化 Cookie 并关闭窗口。不读取个人浏览器凭据、不保存密码。需要可用的桌面会话；关闭窗口或等待超过 5 分钟时退出认证流程。运行中的查询不会反复打开浏览器。`--relogin` 主动打开浏览器重新认证，并复用已保存的两站 Cookie；统一认证仍有效时可自动跳回，验证成功后保存并关闭窗口。
 
 凭据仅保存在 `.env.cookies.json`（可由 `HIT_JW_SESSION_FILE` 指定），包含两站 Cookie 的完整属性；dotenv 和进程环境中的旧 Cookie 字段不再读取，配置文件不再回写。会话文件原子替换，写入锁和版本检查防止并发覆盖；旧版 JSON 会话验证成功后转存新格式，不依赖 dotenv 指纹。业务验证成功就保存，不因长任务后续失败而丢失有效刷新。删除会话文件可重新开始登录，自定义路径须自行排除 Git 跟踪。
 
@@ -67,7 +67,9 @@ uv run jwts --version
 | 选项 | 说明 |
 | --- | --- |
 | `--data-dir PATH` | 输出目录；向 `hoa-major-data` 写入数据时应指向该仓库根目录 |
-| `--relogin` 主动打开 Firefox 重新认证，并复用已保存的两站 Cookie；统一认证仍有效时可自动跳回，验证成功后保存并关闭窗口。例如：
+| `--relogin` | 打开浏览器重新认证，复用已保存的两站 Cookie，验证成功后保存 |
+
+例如：
 
 ```powershell
 uv run jwts crawl --years 2024 2025 --data-dir ..\hoa-major-data --benchmark
@@ -217,4 +219,6 @@ make check
 make build
 ```
 
-浏览器按 Firefox → Chromium → WebKit 顺序尝试已安装的 Playwright 引擎，仅启动失败时切换。保留引擎原生 UA，设置 zh-CN、Asia/Shanghai 和 1366×768 视口，使用可见窗口；不使用固定旧版或跨引擎 UA。验证码由维护者手动完成。
+浏览器按系统 Edge → 系统 Chrome → 已安装的 Playwright Chromium → 已安装的 Playwright WebKit 顺序尝试，仅启动失败时切换。不再尝试 Playwright Firefox，也不会自动下载浏览器；系统已有 Edge/Chrome 时无需额外安装。没有可用引擎时，可自行运行 `uv run playwright install chromium` 安装备用引擎。保留引擎原生 UA，设置 zh-CN、Asia/Shanghai 和 1366×768 视口，使用可见窗口；不使用固定旧版或跨引擎 UA。验证码由维护者手动完成。
+
+CLI 启动后记录脱敏认证日志 `data/jwts-auth.log`，每份约 2 MB，保留 3 份轮转备份。记录 Cookie 数量、HTTP 状态、受限跳转路径、CAS 恢复和保存结果；不记录 Cookie 值、查询参数、CAS ticket 或响应正文。

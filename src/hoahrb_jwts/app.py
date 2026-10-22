@@ -88,7 +88,7 @@ def build_parser() -> argparse.ArgumentParser:
     crawl_parser.add_argument(
         "--relogin",
         action="store_true",
-        help="open Firefox to reauthenticate using saved session state and persist verified cookies",
+        help="open a browser to reauthenticate using saved session state and persist verified cookies",
     )
     crawl_parser.add_argument(
         "--benchmark", action="store_true", help="print total local crawl duration"
@@ -107,7 +107,7 @@ def build_parser() -> argparse.ArgumentParser:
     grades_parser.add_argument(
         "--relogin",
         action="store_true",
-        help="open Firefox to reauthenticate using saved session state and persist verified cookies",
+        help="open a browser to reauthenticate using saved session state and persist verified cookies",
     )
     grades_parser.add_argument(
         "--benchmark", action="store_true", help="print total local crawl duration"
@@ -187,6 +187,12 @@ def _exit_code(error: HoahrbJwtsError) -> int:
 
 def main(argv: Sequence[str] | None = None, environ: Mapping[str, str] = os.environ) -> int:
     args = build_parser().parse_args(argv)
+    from .diagnostics import configure_auth_logging, logger
+
+    try:
+        configure_auth_logging()
+    except OSError:
+        print("warning: unable to create authentication diagnostic log", file=sys.stderr)
     started_at = time.perf_counter()
     try:
         if args.command == "crawl":
@@ -194,6 +200,7 @@ def main(argv: Sequence[str] | None = None, environ: Mapping[str, str] = os.envi
         else:
             summary = run_grades(args, environ)
     except HoahrbJwtsError as error:
+        logger.warning("command_failed type=%s", type(error).__name__)
         print(f"error: {error}", file=sys.stderr)
         return _exit_code(error)
     if args.command == "crawl":
