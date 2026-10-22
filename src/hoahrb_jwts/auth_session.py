@@ -35,9 +35,7 @@ class TeachingSession:
             self._seed_cookie(settings.cookie, urlsplit(settings.base_url).hostname, secure=False)
             self._seed_cookie(settings.cas_cookie, "ids.hit.edu.cn", secure=True)
             if settings.cookie_file is not None:
-                self._store = SessionCookieStore(
-                    settings.cookie_file, settings.cookie, settings.base_url, settings.cas_cookie
-                )
+                self._store = SessionCookieStore(settings.cookie_file, settings.base_url)
                 self._store.restore(self._client.cookies)
         except Exception:
             self._client.close()
@@ -196,7 +194,4 @@ class TeachingSession:
         if not self._verified:
             raise AuthenticationError("尚未成功验证会话，不能持久化 Cookie")
         if self._store is not None:
-            cookie = self._prepare("GET", "/").headers.get("Cookie", "")
-            if not cookie:
-                raise AuthenticationError("会话已没有可用的根路径 Cookie")
-            self._store.save(cookie, self._client.cookies)
+            self._store.save(self._client.cookies)

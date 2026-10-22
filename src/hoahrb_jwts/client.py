@@ -132,19 +132,7 @@ class TeachingSystemClient:
         try:
             self._auth.check_authentication()
         except LoginRequired:
-            from dotenv import dotenv_values
-
-            if self.settings.cookie_file is not None:
-                current = dotenv_values(
-                    self.settings.cookie_file, encoding="utf-8-sig", interpolate=False
-                )["HIT_JW_COOKIE"]
-                self.settings = replace(self.settings, cookie=current)
-            browser_login(self.settings)
-            cookie = dotenv_values(
-                self.settings.cookie_file, encoding="utf-8-sig", interpolate=False
-            )["HIT_JW_COOKIE"]
-            self.settings = replace(self.settings, cookie=cookie)
-            self._auth = TeachingSession(self.settings, session=self.session)
+            self.relogin()
         cookie = self._auth._prepare("GET", "/").headers.get("Cookie", "")
         self.settings = replace(self.settings, cookie=cookie)
         return cookie
@@ -152,12 +140,6 @@ class TeachingSystemClient:
     def relogin(self) -> None:
         """Force browser authentication, reusing the saved CAS session when valid."""
         browser_login(self.settings)
-        from dotenv import dotenv_values
-
-        cookie = dotenv_values(self.settings.cookie_file, encoding="utf-8-sig", interpolate=False)[
-            "HIT_JW_COOKIE"
-        ]
-        self.settings = replace(self.settings, cookie=cookie)
         self._auth = TeachingSession(self.settings, session=self.session)
 
     @staticmethod

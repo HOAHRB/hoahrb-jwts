@@ -73,6 +73,7 @@ def test_crawl_writes_all_paginated_courses(tmp_path: Path) -> None:
         ["crawl", "--years", "2025", "--data-dir", str(data_dir)],
         environ={
             "HIT_JW_COOKIE": "JSESSIONID=sanitized",
+            "HIT_JW_SESSION_FILE": str(tmp_path / "session.cookies.json"),
             "HIT_JW_DELAY_SECONDS": "0",
             "HIT_JW_MAX_RETRIES": "0",
         },
@@ -81,7 +82,7 @@ def test_crawl_writes_all_paginated_courses(tmp_path: Path) -> None:
     assert responses.calls[0].request.url == "http://jwts.hit.edu.cn/zxjh/queryZxkc"
     assert responses.calls[1].request.url == "http://jwts.hit.edu.cn/zxjh/queryZxkc"
     assert all(
-        call.request.headers["Cookie"] == "JSESSIONID=sanitized" for call in responses.calls[1:]
+        "Cookie" not in call.request.headers for call in responses.calls[1:]
     )
     mapping = json.loads((data_dir / "major_mapping.json").read_text(encoding="utf-8"))
     assert mapping["2025"]["35158"]["plan_ID"] == "HIT-2025-35158"

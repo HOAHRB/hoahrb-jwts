@@ -14,7 +14,7 @@ DEFAULT_DATA_DIR = Path(__file__).parent / "data"
 
 
 class CookieSource(Enum):
-    """Where the effective teaching-system Cookie was loaded from."""
+    """Where non-secret runtime configuration was loaded from."""
 
     PROCESS_ENV = "process_env"
     DOTENV = "dotenv"
@@ -36,9 +36,7 @@ class Settings:
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] = os.environ) -> "Settings":
-        cookie = environ.get("HIT_JW_COOKIE", "").strip()
-        if not cookie:
-            raise ConfigError("HIT_JW_COOKIE is required")
+        cookie = ""
 
         base_url = environ.get("HIT_JW_BASE_URL", "http://jwts.hit.edu.cn").strip().rstrip("/")
         if not base_url:
@@ -73,26 +71,32 @@ class Settings:
             delay_seconds=delay_seconds,
             max_retries=max_retries,
             cookie_source=CookieSource.PROCESS_ENV,
-            cookie_file=None,
-            cas_cookie=environ.get("HIT_JW_CAS_COOKIE", "").strip(),
+            cookie_file=Path(environ.get("HIT_JW_SESSION_FILE", ".env.cookies.json")),
+            cas_cookie="",
         )
 
     @classmethod
     def from_sources(
         cls, environ: Mapping[str, str], dotenv_path: Path | None = None
     ) -> "Settings":
-        """Load process environment first, then the project's .env as a Cookie fallback."""
+        """Load non-secret runtime options; authentication is stored only in session JSON."""
 
-        if "HIT_JW_COOKIE" in environ or "HIT_JW_CAS_COOKIE" in environ or dotenv_path is None:
+        if dotenv_path is None:
             return cls.from_env(environ)
 
         try:
             from dotenv import dotenv_values
         except ImportError as exc:
-            raise ConfigError("python-dotenv is required to load HIT_JW_COOKIE from .env") from exc
+            raise ConfigError("python-dotenv is required to load runtime options") from exc
 
         dotenv_values_map = dotenv_values(dotenv_path, encoding="utf-8-sig", interpolate=False)
         merged = {key: value for key, value in dotenv_values_map.items() if isinstance(value, str)}
         merged.update(environ)
         settings = cls.from_env(merged)
-        return replace(settings, cookie_source=CookieSource.DOTENV, cookie_file=dotenv_path)
+        session_file = Path(
+            merged.get(
+                "HIT_JW_SESSION_FILE",
+                str(dotenv_path.with_name(dotenv_path.name + ".cookies.json")),
+            )
+        )
+        return replace(settings, cookie_source=CookieSource.DOTENV, cookie_file=session_file)

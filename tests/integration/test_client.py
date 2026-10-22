@@ -99,12 +99,15 @@ def test_expired_session_recovers_cas_then_replays_query(settings):
 @responses.activate
 def test_failed_login_does_not_write_cookie(settings, tmp_path):
     from dataclasses import replace
+
     from hoahrb_jwts.config import CookieSource
     from hoahrb_jwts.errors import LoginRequired
 
     path = tmp_path / ".env"
     path.write_text('HIT_JW_COOKIE="JSESSIONID=sanitized"', encoding="utf-8")
-    settings = replace(settings, cookie_source=CookieSource.DOTENV, cookie_file=path)
+    settings = replace(
+        settings, cookie_source=CookieSource.DOTENV, cookie_file=path.with_name(".env.cookies.json")
+    )
     responses.get("http://jwts.hit.edu.cn/zxjh/queryZxkc", body=load_fixture("catalog_login.html"))
     responses.get(
         "http://jwts.hit.edu.cn/loginCAS",
@@ -179,11 +182,14 @@ def test_business_post_redirect_is_not_parsed_as_json(settings):
 @responses.activate
 def test_verified_rotation_is_persisted_and_restored(settings, tmp_path):
     from dataclasses import replace
+
     from hoahrb_jwts.config import CookieSource
 
     path = tmp_path / ".env"
     path.write_bytes(b'\xef\xbb\xbf# keep\r\nHIT_JW_COOKIE="JSESSIONID=sanitized" # keep\r\n')
-    settings = replace(settings, cookie_source=CookieSource.DOTENV, cookie_file=path)
+    settings = replace(
+        settings, cookie_source=CookieSource.DOTENV, cookie_file=path.with_name(".env.cookies.json")
+    )
     responses.get(
         "http://jwts.hit.edu.cn/zxjh/queryZxkc",
         body=load_fixture("catalog_authenticated.html"),
@@ -197,7 +203,10 @@ def test_verified_rotation_is_persisted_and_restored(settings, tmp_path):
     client = TeachingSystemClient(updated)
     assert "scoped=value" in client._auth._prepare("GET", "/pub/test").headers.get("Cookie", "")
     assert "scoped=" not in client._auth._prepare("GET", "/").headers.get("Cookie", "")
-    assert path.read_bytes() == b'\xef\xbb\xbf# keep\r\nHIT_JW_COOKIE="JSESSIONID=new" # keep\r\n'
+    assert (
+        path.read_bytes()
+        == b'\xef\xbb\xbf# keep\r\nHIT_JW_COOKIE="JSESSIONID=sanitized" # keep\r\n'
+    )
 
 
 @responses.activate
@@ -398,6 +407,7 @@ def test_get_grade_summary_posts_later_query_qmcj_pages(settings) -> None:
 
 def test_saved_session_can_be_loaded_into_firefox(settings):
     from dataclasses import replace
+
     from hoahrb_jwts.auth_session import TeachingSession
     from hoahrb_jwts.browser_login import export_browser_cookies
 
@@ -411,7 +421,9 @@ def test_saved_session_can_be_loaded_into_firefox(settings):
 
 def test_login_browser_fallback_and_native_user_agent():
     from unittest.mock import MagicMock
+
     from playwright.sync_api import Error
+
     from hoahrb_jwts.browser_login import launch_login_browser
 
     runtime = MagicMock()

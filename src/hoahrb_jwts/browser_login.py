@@ -148,6 +148,4 @@ def ensure_startup_authentication(settings: Settings) -> None:
             with TeachingSession(settings) as session:
                 session.check_authentication()
         except LoginRequired:
-            if settings.cookie_file is not None:
-                settings = Settings.from_sources({}, settings.cookie_file)
             browser_login(settings)

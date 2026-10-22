@@ -28,14 +28,13 @@ uv run playwright install firefox
 Copy-Item .env.example .env
 ```
 
-先在浏览器中登录哈工大本部教务系统，再编辑 `.env`：把当前会话的完整 Cookie 填入 `HIT_JW_COOKIE`。只有通过代理才能访问教务系统时，才需要填写 `HTTP_PROXY` 和 `HTTPS_PROXY`。Cookie 和代理配置只应保存在本机，绝不能提交。
+`.env` 只配置站点、超时和代理；首次运行或使用 `--relogin` 时通过浏览器登录。凭据只保存于独立会话 JSON，不再读取或回写 dotenv 中的 Cookie。会话文件不可提交。
 
 常用配置如下：
 
 | 变量 | 必需 | 说明 |
 | --- | --- | --- |
-| `HIT_JW_COOKIE` | 是 | 已登录教务系统会话的完整 Cookie |
-| `HIT_JW_CAS_COOKIE` | 否 | 统一认证站自己的 Cookie，供教务会话失效时换票 |
+| `HIT_JW_SESSION_FILE` | 否 | 独立会话文件，默认 `.env.cookies.json` |
 | `HIT_JW_BASE_URL` | 否 | 教务系统地址，默认 `http://jwts.hit.edu.cn` |
 | `HTTP_PROXY` / `HTTPS_PROXY` | 否 | 访问教务系统所需的代理 |
 | `HIT_JW_TIMEOUT_SECONDS` | 否 | 单次请求超时，默认 20 秒 |
@@ -48,7 +47,7 @@ Copy-Item .env.example .env
 
 需要人工登录时使用 Playwright 配套 Firefox，与个人 Firefox 配置分离。请在窗口内自行完成登录和验证码；验证业务页面后才导入、持久化 Cookie 并关闭窗口。不读取个人浏览器凭据、不保存密码。需要先执行 `uv run playwright install firefox`，并有桌面会话；关闭窗口或等待超过 5 分钟时退出认证流程。运行中的查询不会反复打开浏览器。`--relogin` 主动打开 Firefox 重新认证，并复用已保存的两站 Cookie；统一认证仍有效时可自动跳回，验证成功后保存并关闭窗口。
 
-文件来源的凭据通过 `.env` 与 `.env.cookies.json` 保存：前者保留兼容 Cookie 头，后者保存两站 Cookie 的完整属性。保存采用原子替换、写入锁和版本检查，保留注释、换行和 BOM，并拒绝覆盖人工或其他进程的新凭据。手动修改 Cookie 或站点后，旧缓存失效。业务验证成功就保存，避免长任务稍后失败时丢失有效刷新。缓存业务响应不能验证会话；进程环境凭据不写入文件。认证文件和写入临时文件均已被 Git 忽略。
+凭据仅保存在 `.env.cookies.json`（可由 `HIT_JW_SESSION_FILE` 指定），包含两站 Cookie 的完整属性；dotenv 和进程环境中的旧 Cookie 字段不再读取，配置文件不再回写。会话文件原子替换，写入锁和版本检查防止并发覆盖；旧版 JSON 会话验证成功后转存新格式，不依赖 dotenv 指纹。业务验证成功就保存，不因长任务后续失败而丢失有效刷新。删除会话文件可重新开始登录，自定义路径须自行排除 Git 跟踪。
 
 ### 命令概览
 
@@ -83,7 +82,7 @@ uv run jwts grades --data-dir ..\hoa-major-data
 无标签记录中，专业段以 `M` 开头的归入微专业，学院代码后可带两位年份且随后
 以 `L` 开头的分流大类归入本科，其余归入未分类。
 
-默认情况下，抓取开始前会请求教务系统的 CAS 地址探测现有会话。该请求不一定返回新的 Cookie：没有更新时继续使用当前 Cookie；返回更新时立即更新正在工作的 HTTP 会话，并用它完成本次抓取。实际认证状态由后续业务接口验证。抓取成功后，如果 Cookie 来自 `.env` 且确实发生变化，才会原样保留其他配置和注释并更新其中的 `HIT_JW_COOKIE`；更新后的值会写成双引号包裹的 dotenv 格式，但请求仍使用不带外层引号的 Cookie 值。若需要排查会话问题、坚持使用填写的 Cookie，可加 `--relogin` 主动打开 Firefox 重新认证，并复用已保存的两站 Cookie；统一认证仍有效时可自动跳回，验证成功后保存并关闭窗口。工具不会自动登录，也不会把 Cookie 写入版本库。
+默认启动先验证业务页，必要时自动恢复认证。需要主动重新认证时使用 `--relogin`，它载入已保存的两站 Cookie；统一认证仍有效时可直接跳回，验证成功后保存并关闭窗口。会话只保存在独立 JSON 文件。
 
 `crawl` 会替换指定年级的 `major_mapping.json` 条目和计划文件，并按本次计划中实际出现的课程代码去重抓取中英文课程简介。本次涉及的课程会增量更新到 `course_introductions.json`，未涉及的已有课程保持不变；它不会改动 `grades_summary.json`。成绩构成由下面的独立命令抓取。
 
@@ -157,7 +156,7 @@ uv run ruff check src tests
 
 ## 更新成绩构成
 
-成绩抓取先读取 `/cjcx/queryQmcj` 的成绩列表，再逐个请求列表中放大镜对应的 `/cjcx/queryCjxxView` 详情页，从详情页的“权重（占总成绩百分比）”字段提取成绩构成。它沿用同一份 `HIT_JW_COOKIE`、代理和 CAS 会话刷新逻辑。`grades_summary.json` 由 `hoa-major-data` 仓库持有，因此运行时应将 `--data-dir` 指向该仓库根目录：
+成绩抓取先读取 `/cjcx/queryQmcj` 的成绩列表，再逐个请求列表中放大镜对应的 `/cjcx/queryCjxxView` 详情页，从详情页的“权重（占总成绩百分比）”字段提取成绩构成。它沿用同一份会话 JSON、代理和 CAS 认证恢复逻辑。`grades_summary.json` 由 `hoa-major-data` 仓库持有，因此运行时应将 `--data-dir` 指向该仓库根目录：
 
 ```powershell
 uv run jwts grades --data-dir ..\hoa-major-data
