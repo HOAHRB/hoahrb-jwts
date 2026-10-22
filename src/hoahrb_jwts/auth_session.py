@@ -18,7 +18,13 @@ class _NeedsAuthentication(LoginRequired):
 
 
 class TeachingSession:
-    def __init__(self, settings: Settings, *, session: requests.Session | None = None):
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        session: requests.Session | None = None,
+        restore_session: bool = True,
+    ):
         self.settings = settings
         self._store = None
         self._verified = False
@@ -33,11 +39,15 @@ class TeachingSession:
             }
         )
         try:
-            self._seed_cookie(settings.cookie, urlsplit(settings.base_url).hostname, secure=False)
-            self._seed_cookie(settings.cas_cookie, "ids.hit.edu.cn", secure=True)
+            if restore_session:
+                self._seed_cookie(
+                    settings.cookie, urlsplit(settings.base_url).hostname, secure=False
+                )
+                self._seed_cookie(settings.cas_cookie, "ids.hit.edu.cn", secure=True)
             if settings.cookie_file is not None:
                 self._store = SessionCookieStore(settings.cookie_file, settings.base_url)
-                self._store.restore(self._client.cookies)
+                if restore_session:
+                    self._store.restore(self._client.cookies)
             logger.info(
                 "session_loaded teaching_cookies=%d cas_cookies=%d",
                 *(

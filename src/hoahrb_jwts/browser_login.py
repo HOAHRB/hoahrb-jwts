@@ -2,14 +2,27 @@
 
 import threading
 import time
+from collections import deque
 from http.cookiejar import Cookie
 from urllib.parse import unquote, urlsplit
 
 from .auth_session import TeachingSession
 from .config import Settings
+from .diagnostics import logger
 from .errors import AuthenticationError, ConfigError, LoginRequired
 
 AUTHENTICATION_LOCK = threading.RLock()
+
+
+class _NavigationLoop:
+    def __init__(self):
+        self.events = deque(maxlen=8)
+
+    def record(self):
+        self.events.append(time.monotonic())
+
+    def detected(self):
+        return len(self.events) == 8 and time.monotonic() - self.events[0] < 5
 
 
 def launch_login_browser(runtime, launch_options: dict):
@@ -62,7 +75,7 @@ def import_browser_cookies(session: TeachingSession, cookies: list[dict]) -> Non
                 discard=expiry <= 0,
                 comment=None,
                 comment_url=None,
-                rest={"HttpOnly": item.get("httpOnly", False)},
+                rest={"HttpOnly": None} if item.get("httpOnly", False) else {},
             )
         )
 
@@ -73,13 +86,23 @@ def export_browser_cookies(session: TeachingSession) -> list[dict]:
     for cookie in session._client.cookies:
         if cookie.is_expired():
             continue
+        # Older exports could mark this JS-managed preference HttpOnly, causing
+        # CAS to continually reload while trying to initialize its locale.
+        if (
+            cookie.domain.lstrip(".") == "ids.hit.edu.cn"
+            and cookie.name == "org.springframework.web.servlet.i18n.CookieLocaleResolver.LOCALE"
+        ):
+            continue
         item = {
             "name": cookie.name,
             "value": cookie.value,
             "domain": cookie.domain,
             "path": cookie.path,
             "secure": cookie.secure,
-            "httpOnly": cookie.has_nonstandard_attr("HttpOnly"),
+            "httpOnly": (
+                cookie.has_nonstandard_attr("HttpOnly")
+                and cookie.get_nonstandard_attr("HttpOnly") is not False
+            ),
             "sameSite": "Lax",
         }
         if cookie.expires is not None:
@@ -88,7 +111,7 @@ def export_browser_cookies(session: TeachingSession) -> list[dict]:
     return result
 
 
-def browser_login(settings: Settings, *, timeout_seconds: float = 300) -> None:
+def browser_login(settings: Settings, *, timeout_seconds: float = 300, fresh: bool = False) -> None:
     """Use an available isolated browser; verify cookies before writing any file."""
     if settings.cookie_file is None:
         raise ConfigError("浏览器登录需要已配置的会话文件路径")
@@ -123,18 +146,39 @@ def browser_login(settings: Settings, *, timeout_seconds: float = 300) -> None:
                     viewport={"width": 1366, "height": 768},
                     extra_http_headers={"Accept-Language": "zh-CN,zh;q=0.9"},
                 )
-                with TeachingSession(settings) as saved:
-                    context.add_cookies(export_browser_cookies(saved))
+                session_options = {"restore_session": False} if fresh else {}
+                with TeachingSession(settings, **session_options) as saved:
+                    if not fresh:
+                        context.add_cookies(export_browser_cookies(saved))
+                    store = saved._store
                 page = context.new_page()
-                page.goto(
-                    settings.base_url + "/loginCAS", wait_until="domcontentloaded", timeout=30000
+                navigation = _NavigationLoop()
+                page.on(
+                    "framenavigated",
+                    lambda frame: navigation.record() if frame == page.main_frame else None,
                 )
+                # Commit returns before a looping page can indefinitely delay DOMContentLoaded.
+                page.goto(settings.base_url + "/loginCAS", wait_until="commit", timeout=30000)
+                reset_once = False
                 deadline = time.monotonic() + timeout_seconds
                 while time.monotonic() < deadline:
                     if page.is_closed():
                         raise LoginRequired("登录窗口已关闭，未更新凭据")
+                    if navigation.detected():
+                        if reset_once:
+                            raise LoginRequired("空会话仍发生登录跳转循环，请检查站点或代理")
+                        logger.warning("browser_navigation_loop clearing_context_cookies_once")
+                        reset_once = True
+                        context.clear_cookies()
+                        navigation.events.clear()
+                        page.goto(
+                            settings.base_url + "/loginCAS", wait_until="commit", timeout=30000
+                        )
+                        continue
                     if urlsplit(page.url).hostname == urlsplit(settings.base_url).hostname:
-                        with TeachingSession(settings) as session:
+                        with TeachingSession(settings, **session_options) as session:
+                            # Keep the initial file revision for concurrent-write protection.
+                            session._store = store
                             import_browser_cookies(session, context.cookies())
                             try:
                                 session.check_authentication(refresh=False)

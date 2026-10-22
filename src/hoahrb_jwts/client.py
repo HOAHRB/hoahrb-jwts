@@ -137,9 +137,12 @@ class TeachingSystemClient:
         self.settings = replace(self.settings, cookie=cookie)
         return cookie
 
-    def relogin(self) -> None:
+    def relogin(self, *, fresh: bool = False) -> None:
         """Force browser authentication, reusing the saved CAS session when valid."""
-        browser_login(self.settings)
+        if fresh:
+            browser_login(self.settings, fresh=True)
+        else:
+            browser_login(self.settings)
         self._auth = TeachingSession(self.settings, session=self.session)
 
     @staticmethod

@@ -222,3 +222,15 @@ make build
 浏览器按系统 Edge → 系统 Chrome → 已安装的 Playwright Chromium → 已安装的 Playwright WebKit 顺序尝试，仅启动失败时切换。不再尝试 Playwright Firefox，也不会自动下载浏览器；系统已有 Edge/Chrome 时无需额外安装。没有可用引擎时，可自行运行 `uv run playwright install chromium` 安装备用引擎。保留引擎原生 UA，设置 zh-CN、Asia/Shanghai 和 1366×768 视口，使用可见窗口；不使用固定旧版或跨引擎 UA。验证码由维护者手动完成。
 
 CLI 启动后记录脱敏认证日志 `data/jwts-auth.log`，每份约 2 MB，保留 3 份轮转备份。记录 Cookie 数量、HTTP 状态、受限跳转路径、CAS 恢复和保存结果；不记录 Cookie 值、查询参数、CAS ticket 或响应正文。
+
+一次性重新登录（不保留启动开关）：
+
+```powershell
+uv run --script relogin.py --help
+uv run --script relogin.py
+uv run --script relogin.py --fresh
+```
+
+默认复用保存的会话；`--fresh` 忽略两站旧 Cookie，从空会话登录。取消或验证失败保留原文件；成功后原子替换，期间其他进程修改会话会拒绝覆盖。支持 `--env-file PATH`（默认 `.env`）。抓取命令仍可使用 `--relogin`；其原有 `--fresh` 参数仅用于清除抓取断点，不改变登录方式。
+
+恢复 Cookie 时保留 HttpOnly 的实际值；CAS 语言偏好 Cookie 由网页重新生成，避免旧缓存引发循环。5 秒内至少 8 次主页面跳转时，在同一窗口清空 Cookie 重试一次；仍循环则停止，不覆盖原文件。
