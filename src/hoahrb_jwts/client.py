@@ -17,6 +17,7 @@ from .browser_login import browser_login
 from .checkpoint import CrawlCheckpoint
 from .config import Settings
 from .course_introduction import CourseIntroductions, parse_course_introduction
+from .data_merge import parse_default_plan_identity, parse_student_profile
 from .errors import AuthenticationError, LoginRequired, ParseError, TransportError
 from .grade_summary import (
     GradeDetailReference,
@@ -154,6 +155,13 @@ class TeachingSystemClient:
 
     def get_catalog(self) -> Catalog:
         return self._parsed_request("GET", "/zxjh/queryZxkc", parse_catalog_page)
+
+    def get_student_profile(self) -> dict[str, str]:
+        # Always live: an account identity must never come from a crawl checkpoint.
+        profile = parse_student_profile(self._request("GET", "/xswhxx/queryXswhxx").text)
+        # No filters or checkpoint: these defaults belong to the current account.
+        response = self._request("GET", "/zxjh/queryZxkc")
+        return parse_default_plan_identity(response.text, profile)
 
     def get_majors(self, year: str, department: Department) -> tuple[Major, ...]:
         def parse(text: str) -> tuple[Major, ...]:

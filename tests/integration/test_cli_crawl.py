@@ -81,9 +81,7 @@ def test_crawl_writes_all_paginated_courses(tmp_path: Path) -> None:
     assert exit_code == 0
     assert responses.calls[0].request.url == "http://jwts.hit.edu.cn/zxjh/queryZxkc"
     assert responses.calls[1].request.url == "http://jwts.hit.edu.cn/zxjh/queryZxkc"
-    assert all(
-        "Cookie" not in call.request.headers for call in responses.calls[1:]
-    )
+    assert all("Cookie" not in call.request.headers for call in responses.calls[1:])
     mapping = json.loads((data_dir / "major_mapping.json").read_text(encoding="utf-8"))
     assert mapping["2025"]["35158"]["plan_ID"] == "HIT-2025-35158"
     generated = toml.load(data_dir / "plans" / "本_2025_人文社科学部_俄语（火箭系统与航天）.toml")

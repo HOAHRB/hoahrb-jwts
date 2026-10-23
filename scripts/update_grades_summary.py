@@ -17,13 +17,14 @@ Notes:
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import tomllib
 import urllib.request
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
+
+from hoahrb_jwts.writer import publish_grade_summary
 
 SOURCE_URL = (
     "https://raw.githubusercontent.com/HITSZ-OpenAuto/repos-management/main/grades_summary.toml"
@@ -121,13 +122,23 @@ def extract_grade_strings(obj: Any) -> list[str]:
 
 def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        description="将 repos-management 的成绩构成转换为 hoa-major-data 使用的 JSON"
+        description=(
+            "从上游 repos-management/grades_summary.toml 下载并转换中央成绩汇总，"
+            "按课程和变体增量合入 grades_summary.json。保留未涉及条目，冲突保留已有值并汇报；"
+            "已有文件损坏时拒绝覆盖。不修改培养方案内的 grade_details，不执行 Git 同步、提交或推送。"
+        ),
+        epilog=(
+            "示例：\n"
+            "  uv run python scripts/update_grades_summary.py --data-dir ../hoa-major-data\n"
+            "此脚本用于中央汇总维护；贡献本人专业成绩请使用 jwts grades。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "--data-dir",
         type=Path,
         default=DEFAULT_DATA_DIR,
-        help="输出目录；默认 src/hoahrb_jwts/data",
+        help="包含 grades_summary.json 的输出目录；默认 src/hoahrb_jwts/data，保留其他文件",
     )
     args = parser.parse_args(argv)
 
@@ -175,12 +186,9 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     out = out_grades
 
-    output_path = args.data_dir / "grades_summary.json"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        json.dumps(out, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    summary = publish_grade_summary(args.data_dir, out)
+    for identity in summary.conflicts:
+        print(f"grade conflict (existing retained): {identity}")
 
 
 if __name__ == "__main__":

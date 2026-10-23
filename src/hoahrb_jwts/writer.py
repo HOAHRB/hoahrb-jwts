@@ -45,6 +45,7 @@ class GradePublicationSummary:
     added: int
     updated: int
     unchanged: int
+    conflicts: tuple[str, ...] = ()
 
 
 def _plan_filename(plan: NormalizedPlan) -> str:
@@ -221,8 +222,37 @@ def _year_from_filename(path: Path) -> str | None:
     return (match.group(1) or match.group(2)) if match else None
 
 
-def _write_toml(path: Path, plan: NormalizedPlan) -> None:
-    path.write_text(toml.dumps(plan_to_dict(plan)), encoding="utf-8")
+def _load_plan_grade_details(plans_path: Path, requested_years: set[str]) -> dict:
+    """Keep manually maintained grading with its curriculum course, never its repo mapping."""
+    details = {}
+    for path in sorted(plans_path.glob("*.toml")):
+        text = path.read_text(encoding="utf-8")
+        if "grade_details" not in text:
+            continue
+        try:
+            existing = toml.loads(text)
+            info = existing["info"]
+            year, major = str(info["year"]), str(info["major_code"])
+            if year not in requested_years:
+                continue
+            for course in existing.get("courses", []):
+                if "grade_details" in course:
+                    key = (year, major, course["course_code"])
+                    if key in details and details[key] != course["grade_details"]:
+                        raise ValidationError(f"conflicting grade_details for {key}")
+                    details[key] = course["grade_details"]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValidationError(f"could not preserve grade_details from {path.name}") from exc
+    return details
+
+
+def _write_toml(path: Path, plan: NormalizedPlan, grade_details: dict) -> None:
+    data = plan_to_dict(plan)
+    for course in data["courses"]:
+        key = (plan.year, plan.major_code, course["course_code"])
+        if key in grade_details:
+            course["grade_details"] = grade_details[key]
+    path.write_text(toml.dumps(data), encoding="utf-8")
 
 
 def _json_text(mapping: dict[str, object]) -> str:
@@ -284,6 +314,19 @@ def publish_plans(
     data_dir = Path(data_dir)
     mapping_path = data_dir / "major_mapping.json"
     plans_path = data_dir / "plans"
+    grade_details = _load_plan_grade_details(plans_path, requested_years)
+    retained_courses = {
+        (plan.year, plan.major_code, course.course_code)
+        for plan in generated_files.values()
+        for course in plan.courses
+    }
+    orphaned_details = set(grade_details) - retained_courses
+    if orphaned_details:
+        identities = ", ".join("/".join(key) for key in sorted(orphaned_details))
+        raise ValidationError(
+            f"publication would remove contributed grade_details: {identities}; "
+            "move or archive these contributions before publishing"
+        )
     introductions_path = data_dir / "course_introductions.json"
     existing_mapping = _load_existing_mapping(mapping_path)
     candidate_mapping = {
@@ -313,7 +356,7 @@ def publish_plans(
                     if path.is_file() and _year_from_filename(path) not in requested_years:
                         shutil.copy2(path, staged_plans / path.name)
             for filename, plan in generated_files.items():
-                _write_toml(staged_plans / filename, plan)
+                _write_toml(staged_plans / filename, plan, grade_details)
             staged_mapping = stage / "major_mapping.json"
             staged_mapping.write_text(_json_text(candidate_mapping), encoding="utf-8")
             staged_introductions = stage / "course_introductions.json"
@@ -434,34 +477,47 @@ def _grade_json_text(summary: GradeSummary) -> str:
     return json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
 
-def _load_grade_summary_for_diff(path: Path) -> dict[str, object]:
+def _load_grade_summary_for_diff(path: Path) -> GradeSummary:
     if not path.exists():
         return {}
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return value if isinstance(value, dict) else {}
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PublicationError(
+            "existing grades_summary.json cannot be read; refusing to overwrite"
+        ) from exc
+    if value != {}:
+        _validate_grade_summary(value)
+    elif not isinstance(value, dict):
+        raise ValidationError("existing grades_summary.json is not an object")
+    return value
 
 
 def publish_grade_summary(data_dir: Path, summary: GradeSummary) -> GradePublicationSummary:
-    """Atomically replace ``grades_summary.json`` with a validated summary."""
+    """Merge contributions by course/variant, retaining and reporting conflicts."""
 
     _validate_grade_summary(summary)
     data_dir = Path(data_dir)
     output_path = data_dir / "grades_summary.json"
-    candidate = _grade_json_text(summary)
     existing = _load_grade_summary_for_diff(output_path)
+    merged = {code: dict(variants) for code, variants in existing.items()}
+    conflicts = []
+    for code, variants in sorted(summary.items()):
+        target = merged.setdefault(code, {})
+        for variant, items in sorted(variants.items()):
+            if variant in target and target[variant] != items:
+                conflicts.append(f"{code}/{variant}")
+            else:
+                target[variant] = items
+    candidate = _grade_json_text(merged)
     existing_codes = set(existing)
     new_codes = set(summary)
     added = len(new_codes - existing_codes)
-    removed_or_missing = len(existing_codes - new_codes)
-    updated = sum(existing.get(code) != summary.get(code) for code in new_codes & existing_codes)
+    updated = sum(existing[code] != merged[code] for code in new_codes & existing_codes)
     unchanged = len(new_codes & existing_codes) - updated
-    # A removed course is represented as an update from the file consumer's
-    # perspective; retain the compact four-field publication summary used by
-    # the plan writer without exposing a second removal field.
-    updated += removed_or_missing
+
+    if merged == existing:
+        return GradePublicationSummary(len(summary), added, updated, unchanged, tuple(conflicts))
 
     temporary_path: Path | None = None
     try:
@@ -490,4 +546,5 @@ def publish_grade_summary(data_dir: Path, summary: GradeSummary) -> GradePublica
         added=added,
         updated=updated,
         unchanged=unchanged,
+        conflicts=tuple(conflicts),
     )

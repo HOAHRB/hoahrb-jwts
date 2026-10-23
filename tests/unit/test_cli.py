@@ -6,6 +6,7 @@ import pytest
 
 from hoahrb_jwts import app
 from hoahrb_jwts.config import DEFAULT_DATA_DIR, CookieSource
+from hoahrb_jwts.data_merge import MergeSummary
 from hoahrb_jwts.errors import (
     AuthenticationError,
     ConfigError,
@@ -14,7 +15,7 @@ from hoahrb_jwts.errors import (
     TransportError,
     ValidationError,
 )
-from hoahrb_jwts.writer import GradePublicationSummary, PublicationSummary
+from hoahrb_jwts.writer import PublicationSummary
 
 
 def test_cli_requires_years_and_defaults_data_directory_to_original_location() -> None:
@@ -64,15 +65,20 @@ def test_grade_crawl_publishes_through_gateway(
             calls.append("grades")
             return {"C001": {"default": [{"name": "考试", "percent": "100%"}]}}
 
+        def get_student_profile(self):
+            return {
+                "year": "2025",
+                "major_code": "35152",
+                "major_name": "Russian",
+                "school_name": "School",
+            }
+
     monkeypatch.setattr(app.Settings, "from_sources", lambda *args: FakeSettings())
     monkeypatch.setattr(app, "TeachingSystemClient", lambda *args, **kwargs: FakeGateway())
     monkeypatch.setattr(
         app,
-        "publish_grade_summary",
-        lambda data_dir, summary: (
-            calls.append(f"publish:{data_dir.name}:{sorted(summary)}")
-            or GradePublicationSummary(1, 1, 0, 0)
-        ),
+        "merge_data",
+        lambda source, data_dir: calls.append(f"merge:{data_dir.name}") or MergeSummary(updated=1),
     )
 
     result = app.run_grades(
@@ -81,7 +87,8 @@ def test_grade_crawl_publishes_through_gateway(
     )
 
     assert result.courses == 1
-    assert calls == ["refresh", "grades", f"publish:{tmp_path.name}:['C001']"]
+    assert calls == ["refresh", "grades", f"merge:{tmp_path.name}"]
+    assert len(list((tmp_path / "grade_contributions").glob("*.json"))) == 1
 
 
 def test_grade_crawl_leaves_verified_persistence_to_gateway(
@@ -280,6 +287,7 @@ def test_relogin_opens_browser_instead_of_normal_startup_check(monkeypatch, tmp_
         refresh_cookie=lambda: pytest.fail("normal check must be skipped"),
         relogin=lambda: calls.append("relogin"),
         get_grade_summary=lambda: {},
+        get_student_profile=lambda: {"year": "2025", "major_code": "35152"},
     )
     monkeypatch.setattr(app.Settings, "from_sources", lambda *args: SimpleNamespace())
     monkeypatch.setattr(app, "TeachingSystemClient", lambda *args, **kwargs: gateway)
@@ -287,9 +295,7 @@ def test_relogin_opens_browser_instead_of_normal_startup_check(monkeypatch, tmp_
     monkeypatch.setattr(
         app, "publish_plans", lambda *args, **kwargs: PublicationSummary(0, 0, 0, 0)
     )
-    monkeypatch.setattr(
-        app, "publish_grade_summary", lambda *args: GradePublicationSummary(0, 0, 0, 0)
-    )
+    monkeypatch.setattr(app, "merge_data", lambda *args: MergeSummary())
     args = Namespace(years=["2025"], data_dir=tmp_path, cache_dir=tmp_path / "cache", relogin=True)
     if command == "crawl":
         app.run_crawl(args, {})

@@ -29,5 +29,5 @@ class PublicationError(HoahrbJwtsError):
     """A validated candidate could not be published safely."""
 
 
-class LoginRequired(AuthenticationError):
+class LoginRequired(AuthenticationError):  # noqa: N818 - retain the existing public exception name
     """Interactive login is required; distinct from transport and authorization errors."""

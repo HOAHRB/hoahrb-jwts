@@ -6,7 +6,8 @@
 
 - `major_mapping.json`：年级、学院和专业的目录；
 - `plans/*.toml`：每个专业的课程列表。
-- `grades_summary.json`：课程成绩构成及其年级变体。
+- `grade_contributions/*.json`：当前账号可见的课程成绩构成贡献，合入对应方案的 `grade_details`。
+- `grades_summary.json`：独立维护的资料仓库成绩汇总，不由个人 `grades` 抓取覆盖。
 - `course_introductions.json`：培养方案中课程的中英文简介。
 
 它不会自动输入账号密码，也不会向教务系统提交业务数据。启动发现登录态失效且无法通过已有统一认证会话恢复时，会打开独立的浏览器窗口供维护者手动登录。正确的流程是：本地抓取 → 查看数据 diff → 人工确认后提交 `hoa-major-data`。
@@ -156,61 +157,70 @@ uv run pytest tests/unit/test_discovery.py -q
 uv run ruff check src tests
 ```
 
-## 更新成绩构成
+## 抓取并合入成绩贡献
 
-成绩抓取先读取 `/cjcx/queryQmcj` 的成绩列表，再逐个请求列表中放大镜对应的 `/cjcx/queryCjxxView` 详情页，从详情页的“权重（占总成绩百分比）”字段提取成绩构成。它沿用同一份会话 JSON、代理和 CAS 认证恢复逻辑。`grades_summary.json` 由 `hoa-major-data` 仓库持有，因此运行时应将 `--data-dir` 指向该仓库根目录：
-
-```powershell
-uv run jwts grades --data-dir ..\hoa-major-data
-```
-
-`crawl-grades` 是 `grades` 的别名。抓取结果会校验为 `grades_summary.json` 的现有格式，并以原子方式替换 `hoa-major-data/grades_summary.json`；运行后在 `hoa-major-data` 中审查差异：
+本次工作流的完整命令帮助（包含默认路径、同步行为、数据保留规则及示例）：
 
 ```powershell
-git -C ..\hoa-major-data diff -- grades_summary.json
+uv run jwts --help
+uv run jwts crawl --help
+uv run jwts grades --help
+uv run jwts crawl-grades --help
+uv run jwts merge-data --help
+uv run python scripts/update_grades_summary.py --help
 ```
 
-如果需要从 `repos-management/grades_summary.toml` 生成人工维护版本，仍可使用转换脚本：
+`crawl` 抓取培养方案与课程简介；`grades`（别名 `crawl-grades`）只抓当前账号可见的课程成绩构成。两者的覆盖范围不同。个人抓取只提取分项名称和权重，不导出总成绩、分项得分、姓名或学号。
 
 ```powershell
-python scripts\update_grades_summary.py --data-dir ..\hoa-major-data
+uv run jwts grades
 ```
 
-## 向 `hoa-major-data` 贡献成绩数据
+在本机直接运行 `uv run jwts grades` 即可：默认定位 jwts 仓库旁的 `hoa-major-data`，不存在时从 `HOAHRB/hoa-major-data` 克隆；存在时获取 `origin/main` 并在安全时快进，再抓取当前账号的成绩贡献并合入本人方案。不必填写路径或年级、专业代码；需要登录时按浏览器提示完成认证。
 
-`grades` 只抓取当前账号成绩记录里带放大镜详情、且详情明确提供分项权重的课程。它不会导出总成绩或各分项得分。成绩数据应提交到 `hoa-major-data`，而不是 `hoahrb-jwts`。以下命令假定两个仓库位于相邻目录；贡献前请在本地检出的 `hoa-major-data` 仓库中新建贡献分支。
+以上路径适用于源码检出后 `uv run`。如果使用 wheel 安装后的 `jwts` 命令，默认以运行时当前目录作为工作目录：培养方案输出为 `./jwts-data`，major data 为 `./hoa-major-data`，`.env` 与会话文件也从工作目录读取，不向虚拟环境或 `site-packages` 写入运行数据。两种模式都支持显式指定目录。
 
-1. 登录教务系统，按 Usage 中的说明更新本地 `.env`。
+如果远端有新提交而本地有未提交修改或分支已分叉，会停止并保留所有内容，不自动 stash、重置或解决 Git 冲突。远端没有新提交时允许继续积累本地贡献。程序不会自动提交或推送。
 
-2. 抓取成绩构成，并将结果写入本地 `hoa-major-data` 根目录：
+`--data-dir PATH` 可指定其他输出位置；显式指定非 Git 目录时不联网同步。`--no-sync` 可跳过同步并使用本地副本。提交时同时包含对应方案和 `grade_contributions/`；冲突复核记录位于 `grade_conflicts/`。
 
-   ```powershell
-   uv run jwts grades --data-dir ..\hoa-major-data
-   ```
+程序从个人信息页读取年级、学院和专业，并从当前账号执行教学计划页的服务端默认选中项读取精确专业代码（`pageZydm`），同时核对年级和学院。该请求不带筛选参数、不使用断点缓存，不按同名专业猜测。确认身份后只将成绩写入该方案课程的 `grade_details`；不同专业同课号不互相填充。默认代码缺失或身份字段不一致时拒绝写入。
 
-3. 在 `hoa-major-data` 仓库查看命令输出和数据差异：
+抓到的贡献独立保存在输出目录的 `grade_contributions/<内容哈希>.json`，包含方案身份与成绩构成。冲突或目标方案缺失时仍保留贡献文件，后续可以再次合并；无需重新抓取。该文件不包含学号、姓名、个人成绩或会话凭据。本地有方案时会尝试立即合入；没有方案时先保留贡献，并提示方案缺失。
 
-   ```powershell
-   git -C ..\hoa-major-data status --short
-   git -C ..\hoa-major-data diff -- grades_summary.json
-   ```
+专业课程页面读取方案 TOML 内的 `grade_details`。`grades` 不再向中央 `grades_summary.json` 写入个人课号；中央文件按资料仓库 ID 使用，仍由原有维护流程管理。
 
-4. 提交前逐项确认：
+## 将本地抓取结果合入 hoa-major-data
 
-   - 只修改了 `grades_summary.json`；
-   - 新增内容使用课程代码作为键，并写入 `default` 列表；
-   - 每个分项形如 `{"name": "期末考试", "percent": "60%"}`；
-   - 没有总成绩、个人得分、Cookie 或其他个人信息；
-   - 没有删除本次贡献无关的已有课程。
-
-`grades` 会按当前账号可见数据原子替换 `hoa-major-data/grades_summary.json`。若 diff 中出现其他贡献者课程被删除，必须先保留这些已有条目，只合入本次新增或确认更新的课程，不能直接提交整份删除结果。
-
-确认无误后，在 `hoa-major-data` 仓库提交，并向 `hoa-major-data` 发起 Pull Request：
+本地 `crawl` 结果可以完全不含成绩；合并时以已有 `hoa-major-data` 为基底保留他人的贡献。`merge-data` 默认自动同步相邻仓库，再执行合并，不能用复制目录或覆盖整个文件代替：
 
 ```powershell
-git -C ..\hoa-major-data add grades_summary.json
-git -C ..\hoa-major-data commit -m "data: update HIT grade components"
+uv run jwts merge-data
+git -C ..\hoa-major-data diff --stat
 ```
+
+合并规则：
+
+- 按年级和专业代码匹配方案，按课程代码保留目标方案内已有的 `grade_details`。专业或文件改名不改变关联。
+- 新成绩只写入贡献文件指定的方案；已有不同成绩构成时保留目标内容并汇报冲突，贡献原件保留供复核。
+- 来源没有的方案和课程简介保留；来源有的方案更新基础课程信息。若更新会移除含成绩详情的课程，发布前报错，目标不变。
+- 未变化的方案保持原始字节，不重排、不重写；仅修改发生变化的文件。重命名只移除同一方案的旧文件名，不批量删除目标目录。
+- 中央成绩汇总、查询表、共享分类和其他手工文件不被本地目录覆盖。
+- 写入异常时回滚；回滚失败时保留 `.jwts-merge-recovery.json` 恢复副本。不要同时运行多个写入命令。
+
+历史遗留的未绑定方案成绩贡献会阻止该次合并，应先核实精确方案代码。当前抓取直接读取账号默认专业代码，不依赖同名候选匹配。
+
+`crawl --data-dir ..\hoa-major-data` 直接重抓时也保留已有 `grade_details`；若课程或方案消失会导致贡献丢失，则停止发布并报告标识。课程简介继续增量合并。
+
+旧的人工成绩转换脚本仍可使用：
+
+```powershell
+uv run python scripts\update_grades_summary.py --data-dir ..\hoa-major-data
+```
+
+该脚本按课程／变体增量合并中央汇总，保留未涉及条目，对差异保留已有值并汇报；已有文件损坏时拒绝覆盖。
+
+确认差异后再提交 `hoa-major-data` 中的方案及贡献文件。多人同时贡献时，先合入远端新增提交，再重跑 `merge-data`，不要用个人快照解决冲突。
 
 ## 开发验证
 

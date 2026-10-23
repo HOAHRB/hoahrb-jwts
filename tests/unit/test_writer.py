@@ -6,7 +6,57 @@ import toml
 
 from hoahrb_jwts.errors import PublicationError, ValidationError
 from hoahrb_jwts.models import NormalizedCourse, NormalizedPlan
-from hoahrb_jwts.writer import build_major_mapping, publish_plans
+from hoahrb_jwts.writer import build_major_mapping, publish_grade_summary, publish_plans
+
+
+def test_grades_merge_preserves_other_courses_and_variants_and_reports_conflicts(tmp_path):
+    old = {
+        "C001": {"default": [{"name": "Old"}], "2024_default": [{"name": "2024"}]},
+        "C002": {"default": [{"name": "Other student"}]},
+    }
+    path = tmp_path / "grades_summary.json"
+    path.write_text(json.dumps(old), encoding="utf-8")
+    result = publish_grade_summary(
+        tmp_path,
+        {
+            "C001": {"default": [{"name": "Different"}], "2025_default": [{"name": "2025"}]},
+            "C003": {"default": [{"name": "New"}]},
+        },
+    )
+    merged = json.loads(path.read_text(encoding="utf-8"))
+    assert merged["C001"] == old["C001"] | {"2025_default": [{"name": "2025"}]}
+    assert merged["C002"] == old["C002"]
+    assert merged["C003"] == {"default": [{"name": "New"}]}
+    assert result.conflicts == ("C001/default",)
+    assert (result.added, result.updated) == (1, 1)
+    before = path.read_bytes()
+    publish_grade_summary(tmp_path, {"C003": merged["C003"]})
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("text", ["broken", "[]", '{"C001": {}}'])
+def test_grades_refuses_to_overwrite_invalid_existing_file(tmp_path, text):
+    path = tmp_path / "grades_summary.json"
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises((PublicationError, ValidationError)):
+        publish_grade_summary(tmp_path, {"C002": {"default": [{"name": "New"}]}})
+    assert path.read_text(encoding="utf-8") == text
+
+
+def test_crawl_retains_grade_details_after_plan_rename_and_blocks_orphans(tmp_path):
+    publish_plans(tmp_path, (plan(),), {"2025"})
+    path = next((tmp_path / "plans").glob("*.toml"))
+    data = toml.loads(path.read_text(encoding="utf-8"))
+    details = [{"name": "Exam", "percent": "100%"}]
+    data["courses"][0]["grade_details"] = details
+    path.write_text(toml.dumps(data), encoding="utf-8")
+    publish_plans(tmp_path, (plan(name="New name"),), {"2025"})
+    renamed = next((tmp_path / "plans").glob("*.toml"))
+    assert toml.loads(renamed.read_text(encoding="utf-8"))["courses"][0]["grade_details"] == details
+    before = renamed.read_bytes()
+    with pytest.raises(ValidationError, match="would remove contributed grade_details"):
+        publish_plans(tmp_path, (plan(code="OTHER"),), {"2025"})
+    assert renamed.read_bytes() == before
 
 
 def plan(
@@ -50,6 +100,48 @@ def test_build_major_mapping_is_sorted_and_compatible() -> None:
         "school_name": "人文社科学部",
         "majors": [],
     }
+
+
+def test_publish_preserves_plan_course_grades_across_renames(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    data_dir = tmp_path / "major-data"
+    original = plan()
+    publish_plans(data_dir, (original,), {"2025"})
+    path = next((data_dir / "plans").glob("*.toml"))
+    data = toml.loads(path.read_text(encoding="utf-8"))
+    details = [{"name": "期末考试", "percent": "70%"}]
+    data["courses"][0]["grade_details"] = details
+    path.write_text(toml.dumps(data), encoding="utf-8")
+
+    renamed = replace(original, major_name="新专业名")
+    other_major = plan(code="OTHER")
+    other_year = plan(year="2024")
+    publish_plans(data_dir, (renamed, other_major, other_year), {"2024", "2025"})
+    for path in (data_dir / "plans").glob("*.toml"):
+        data = toml.loads(path.read_text(encoding="utf-8"))
+        if data["info"]["year"] == "2025" and data["info"]["major_code"] == "35158":
+            assert data["courses"][0]["grade_details"] == details
+        else:
+            assert "grade_details" not in data["courses"][0]
+
+    # A removed course must not donate its grades to a replacement course.
+    replacement = replace(renamed, courses=(replace(renamed.courses[0], course_code="C002"),))
+    before = {p.name: p.read_bytes() for p in (data_dir / "plans").glob("*.toml")}
+    with pytest.raises(ValidationError, match="would remove contributed grade_details"):
+        publish_plans(data_dir, (replacement,), {"2025"})
+    assert {p.name: p.read_bytes() for p in (data_dir / "plans").glob("*.toml")} == before
+
+
+def test_publish_preserves_explicit_empty_grades(tmp_path: Path) -> None:
+    data_dir = tmp_path / "major-data"
+    publish_plans(data_dir, (plan(),), {"2025"})
+    path = next((data_dir / "plans").glob("*.toml"))
+    data = toml.loads(path.read_text(encoding="utf-8"))
+    data["courses"][0]["grade_details"] = []
+    path.write_text(toml.dumps(data), encoding="utf-8")
+    publish_plans(data_dir, (plan(),), {"2025"})
+    assert toml.loads(path.read_text(encoding="utf-8"))["courses"][0]["grade_details"] == []
 
 
 def test_publish_uses_parsed_plan_categories(tmp_path: Path) -> None:

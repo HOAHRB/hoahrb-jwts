@@ -9,8 +9,16 @@ from pathlib import Path
 
 from .errors import ConfigError
 
-# Keep the package data location as the default for callers that omit --data-dir.
-DEFAULT_DATA_DIR = Path(__file__).parent / "data"
+# Source checkouts retain the established layout; installed packages use the
+# invocation directory instead of writing inside site-packages.
+_SOURCE_ROOT = Path(__file__).resolve().parents[2]
+SOURCE_CHECKOUT = (_SOURCE_ROOT / "pyproject.toml").is_file() and (
+    _SOURCE_ROOT / "src" / "hoahrb_jwts"
+).is_dir()
+DEFAULT_WORK_DIR = _SOURCE_ROOT if SOURCE_CHECKOUT else Path.cwd()
+DEFAULT_DATA_DIR = (
+    Path(__file__).parent / "data" if SOURCE_CHECKOUT else DEFAULT_WORK_DIR / "jwts-data"
+)
 
 
 class CookieSource(Enum):
