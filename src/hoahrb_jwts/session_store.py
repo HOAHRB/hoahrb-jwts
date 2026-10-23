@@ -6,8 +6,8 @@ import tempfile
 from contextlib import contextmanager
 from http.cookiejar import Cookie, CookieJar
 from pathlib import Path
-from urllib.parse import urlsplit
 
+from .cookie_policy import accepted
 from .errors import ConfigError
 
 
@@ -50,15 +50,14 @@ class SessionCookieStore:
                 return
             if state.get("version") not in {1, 2} or not isinstance(state.get("cookies"), list):
                 raise ValueError
-            allowed = {urlsplit(self.base_url).hostname, "ids.hit.edu.cn"}
             restored = []
             for item in state["cookies"]:
                 item = dict(item)
                 item["rest"] = item.pop("_rest", {})
                 entry = Cookie(**item)
-                if entry.domain.lstrip(".") not in allowed or not entry.path.startswith("/"):
-                    raise ValueError
-                if entry.domain.lstrip(".") == "ids.hit.edu.cn" and not entry.secure:
+                if not accepted(
+                    entry.domain, entry.secure, entry.domain_specified, self.base_url
+                ) or not entry.path.startswith("/"):
                     raise ValueError
                 if not entry.is_expired():
                     restored.append(entry)
@@ -69,13 +68,11 @@ class SessionCookieStore:
             raise ConfigError("教务会话缓存损坏，请移除缓存后重新验证凭据") from None
 
     def save(self, jar: CookieJar) -> None:
-        allowed = {urlsplit(self.base_url).hostname, "ids.hit.edu.cn"}
         entries = [
             entry.__dict__
             for entry in jar
-            if entry.domain.lstrip(".") in allowed
+            if accepted(entry.domain, entry.secure, entry.domain_specified, self.base_url)
             and not entry.is_expired()
-            and (entry.domain.lstrip(".") != "ids.hit.edu.cn" or entry.secure)
         ]
         state = json.dumps(
             {"version": 2, "base_url": self.base_url, "cookies": entries}, ensure_ascii=True

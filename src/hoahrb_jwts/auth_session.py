@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 
 from .auth import MAX_REDIRECTS, checked_target, page_state
 from .config import Settings
+from .cookie_policy import matches
 from .diagnostics import endpoint, logger
 from .errors import AuthenticationError, ConfigError, LoginRequired, TransportError
 from .session_store import SessionCookieStore
@@ -103,7 +104,7 @@ class TeachingSession:
         )
         jar = requests.cookies.RequestsCookieJar()
         for cookie in self._client.cookies:
-            if cookie.domain.lstrip(".") == urlsplit(request.url).hostname:
+            if matches(cookie, urlsplit(request.url).hostname, self.settings.base_url):
                 jar.set_cookie(cookie)
         request.headers.pop("Cookie", None)
         header = requests.cookies.get_cookie_header(jar, request)

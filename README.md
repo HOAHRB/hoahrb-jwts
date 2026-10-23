@@ -234,3 +234,5 @@ uv run --script relogin.py --fresh
 默认复用保存的会话；`--fresh` 忽略两站旧 Cookie，从空会话登录。取消或验证失败保留原文件；成功后原子替换，期间其他进程修改会话会拒绝覆盖。支持 `--env-file PATH`（默认 `.env`）。抓取命令仍可使用 `--relogin`；其原有 `--fresh` 参数仅用于清除抓取断点，不改变登录方式。
 
 恢复 Cookie 时保留 HttpOnly 的实际值；CAS 语言偏好 Cookie 由网页重新生成，避免旧缓存引发循环。5 秒内至少 8 次主页面跳转时，在同一窗口清空 Cookie 重试一次；仍循环则停止，不覆盖原文件。
+
+认证导入与持久化支持 `.hit.edu.cn` 父域 Cookie（例如 `__access_token`），保留域、路径、有效期和 HttpOnly/Secure 属性；HTTP 客户端仅向配置的教务站点和 CAS 发送匹配的 Cookie。旧版曾丢弃父域 Cookie，需重新登录后才能补齐；无法从旧 JSON 恢复丢失的值。

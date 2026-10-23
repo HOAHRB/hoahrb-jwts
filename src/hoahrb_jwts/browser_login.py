@@ -8,6 +8,7 @@ from urllib.parse import unquote, urlsplit
 
 from .auth_session import TeachingSession
 from .config import Settings
+from .cookie_policy import accepted
 from .diagnostics import logger
 from .errors import AuthenticationError, ConfigError, LoginRequired
 
@@ -49,13 +50,22 @@ def launch_login_browser(runtime, launch_options: dict):
 
 
 def import_browser_cookies(session: TeachingSession, cookies: list[dict]) -> None:
-    allowed = {urlsplit(session.settings.base_url).hostname, "ids.hit.edu.cn"}
     session._client.cookies.clear()
     for item in cookies:
         domain = item["domain"]
-        if domain.lstrip(".") not in allowed:
-            continue
-        if domain.lstrip(".") == "ids.hit.edu.cn" and not item["secure"]:
+        keep = accepted(domain, item["secure"], domain.startswith("."), session.settings.base_url)
+        # Record attributes before filtering to diagnose missing remember-login
+        # cookies. Never log values, URLs, tickets or page contents.
+        cookie_domain = domain.lstrip(".")
+        if cookie_domain in {"hit.edu.cn", "edu.cn", "ids.hit.edu.cn"}:
+            logger.info(
+                "browser_cas_cookie domain=%s accepted=%s secure=%s persistent=%s",
+                cookie_domain,
+                keep,
+                bool(item["secure"]),
+                item.get("expires", -1) > 0,
+            )
+        if not keep:
             continue
         expiry = item.get("expires", -1)
         session._client.cookies.set_cookie(
