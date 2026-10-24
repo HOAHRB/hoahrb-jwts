@@ -59,6 +59,33 @@ def test_crawl_retains_grade_details_after_plan_rename_and_blocks_orphans(tmp_pa
     assert renamed.read_bytes() == before
 
 
+@pytest.mark.parametrize("year", ["2023", "2024", "2025", "2026", "2027"])
+@pytest.mark.parametrize("code", ["09333", "35163"])
+def test_publication_corrects_legacy_international_category(tmp_path, year, code):
+    international = plan(year=year, code=code, name="土木工程", department_code="09")
+    domestic = plan(year=year, code="09331", name="土木工程", department_code="09")
+    publish_plans(tmp_path, (international, domestic), {year})
+    output = next((tmp_path / "plans").glob("本科国际生_*.toml"))
+    data = toml.load(output)
+    assert data["info"]["plan_category"] == "本科国际生"
+    data["info"]["plan_category"] = "本"
+    data["courses"][0]["grade_details"] = [{"name": "Exam", "percent": "100%"}]
+    legacy = output.with_name(f"本_{year}_legacy.toml")
+    legacy.write_text(toml.dumps(data), encoding="utf-8")
+    output.unlink()
+
+    result = publish_plans(tmp_path, (international, domestic), {year})
+    assert not legacy.exists()
+    assert not result.filename_fallbacks
+    updated = toml.load(output)
+    assert updated["info"]["plan_category"] == "本科国际生"
+    assert updated["courses"] == data["courses"]
+    mapping = json.loads((tmp_path / "major_mapping.json").read_text(encoding="utf-8"))
+    assert mapping[year][code]["name"] == updated["info"]["major_name"]
+    assert mapping[year][code]["plan_ID"] == updated["info"]["plan_ID"]
+    assert len(list((tmp_path / "plans").glob("本_*.toml"))) == 1
+
+
 def plan(
     year: str = "2025",
     code: str = "35158",

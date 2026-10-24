@@ -17,6 +17,7 @@ import toml
 from .course_introduction import CourseIntroductions
 from .errors import PublicationError, ValidationError
 from .grade_summary import GradeSummary
+from .major_rules import category_for
 from .models import NormalizedPlan
 from .normalize import plan_to_dict
 
@@ -49,6 +50,7 @@ class GradePublicationSummary:
 
 
 def _plan_filename(plan: NormalizedPlan) -> str:
+    plan = replace(plan, category=category_for(plan.year, plan.major_code, plan.category))
     safe_school_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "-", plan.school_name).rstrip(" .")
     safe_major_name = re.sub(
         r'[<>:"/\\|?*\x00-\x1f]', "-", plan.filename_name or plan.major_name
@@ -75,6 +77,10 @@ def _validate_plans(
     requested_years: set[str] | None = None,
     allow_filename_fallback: bool = True,
 ) -> tuple[dict[str, object], dict[str, NormalizedPlan]]:
+    plans = tuple(
+        replace(plan, category=category_for(plan.year, plan.major_code, plan.category))
+        for plan in plans
+    )
     if not plans:
         raise ValidationError("no normalized execution plans to publish")
     if requested_years is not None:

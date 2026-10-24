@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from bs4 import BeautifulSoup
 
 from .errors import AuthenticationError, ParseError
+from .major_rules import category_for
 from .models import Catalog, Department, Major, PlanPage, SourceCourse
 
 _KNOWN_UNDERGRADUATE_MAJOR_CODES = {
@@ -125,6 +126,7 @@ def parse_major_list(payload: object, year: str, department: Department) -> tupl
             category = "本科国际生"
         if normalized_code in _KNOWN_UNDERGRADUATE_MAJOR_CODES:
             category = "本"
+        category = category_for(normalized_year, normalized_code, category)
         if not name:
             raise ParseError(f"major list entry {index} has an empty major name")
         majors.append(

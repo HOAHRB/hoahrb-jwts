@@ -41,3 +41,9 @@ def _rules_by_id() -> dict[tuple[str, str], MajorRule]:
 def rule_for(year: str, code: str) -> MajorRule | None:
     rules = _rules_by_id()
     return rules.get((year, code)) or rules.get(("*", code))
+
+
+def category_for(year: str, code: str, source_category: str) -> str:
+    """Apply confirmed category corrections, including to legacy crawl output."""
+    rule = rule_for(year, code)
+    return rule.category if rule is not None and rule.category else source_category

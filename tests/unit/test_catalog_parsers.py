@@ -78,6 +78,19 @@ def test_parse_major_list_y_marker_overrides_wrong_explicit_category() -> None:
     assert major.category == "本科国际生"
 
 
+@pytest.mark.parametrize("year", ["2023", "2024", "2025", "2026", "2027"])
+@pytest.mark.parametrize("code", ["09333", "35163"])
+@pytest.mark.parametrize("label", ["专业", "专业【本】"])
+def test_parse_major_list_confirmed_international_across_years(year, code, label) -> None:
+    majors = parse_major_list(
+        [{"pageZydm": code, "pageZymc": label} for code in (code, "09331")],
+        year,
+        Department("09", "土木工程学院"),
+    )
+    assert majors[0].category == "本科国际生"
+    assert majors[1].category != "本科国际生"
+
+
 def test_parse_major_list_overrides_known_01044_source_error() -> None:
     major = parse_major_list(
         [{"pageZydm": "01044", "pageZymc": "智能装备与系统（强基计划）【第二学士学位】"}],

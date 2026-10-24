@@ -192,6 +192,26 @@ def test_category_rule_preserves_same_name_domestic_and_international_plans(tmp_
     )
 
 
+@pytest.mark.parametrize("year", ["2023", "2024", "2025", "2026", "2027"])
+@pytest.mark.parametrize("code", ["09333", "35163"])
+def test_discovery_corrects_international_even_from_cached_domestic_major(year, code) -> None:
+    class CivilGateway(FakeGateway):
+        def get_catalog(self) -> Catalog:
+            return Catalog((year,), (Department("09", "土木工程学院"),))
+
+        def get_majors(self, year: str, department: Department) -> tuple[Major, ...]:
+            return tuple(
+                Major(year, "09", department.name, code, "土木工程", "本")
+                for code in ("09331", code)
+            )
+
+    plans = discover_plans(CivilGateway(), (year,))
+    assert {p.major.code: p.major.category for p in plans} == {
+        "09331": "本",
+        code: "本科国际生",
+    }
+
+
 def test_discovery_preserves_w_variants_even_when_courses_are_subsets() -> None:
     class WVariantGateway(FakeGateway):
         def get_majors(self, year: str, department: Department) -> tuple[Major, ...]:

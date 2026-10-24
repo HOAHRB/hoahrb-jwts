@@ -16,6 +16,7 @@ import toml
 from bs4 import BeautifulSoup
 
 from .errors import ParseError, PublicationError, ValidationError
+from .major_rules import category_for
 
 
 def parse_student_profile(html: str) -> dict[str, str]:
@@ -227,6 +228,13 @@ def _merge_data(source: Path, target: Path) -> MergeSummary:
                 course["grade_details"] = items
     filenames = set()
     for key, (name, data) in final.items():
+        info = data["info"]
+        category = category_for(*key, info["plan_category"])
+        if category != info["plan_category"]:
+            if key in existing and existing[key][0].name == name:
+                removed.add("plans/" + name)
+            name = category + name[len(info["plan_category"]):]
+            info["plan_category"] = category
         if name.casefold() in filenames:
             raise ValidationError(f"filename collision: {name}")
         filenames.add(name.casefold())

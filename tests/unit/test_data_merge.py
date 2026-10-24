@@ -70,6 +70,41 @@ def test_unresolved_contribution_does_not_modify_checkout(tmp_path):
     assert {p.name: p.read_bytes() for p in (target / "plans").glob("*.toml")} == before
 
 
+@pytest.mark.parametrize("legacy_location", ["source", "target"])
+@pytest.mark.parametrize("year", ["2023", "2024", "2025", "2026", "2027"])
+@pytest.mark.parametrize("code", ["09333", "35163"])
+def test_merge_corrects_legacy_international_without_losing_courses(tmp_path, legacy_location, year, code):
+    source, target = tmp_path / "local", tmp_path / "checkout"
+    legacy_root = source if legacy_location == "source" else target
+    publish_plans(
+        legacy_root,
+        (plan(year=year, code=code, name="土木工程", department_code="09"),),
+        {year},
+    )
+    path = next((legacy_root / "plans").glob("*.toml"))
+    data = toml.load(path)
+    data["info"]["plan_category"] = "本"
+    data["courses"][0]["grade_details"] = [{"name": "Exam", "percent": "100%"}]
+    legacy = path.with_name(path.name.replace("本科国际生_", "本_", 1))
+    legacy.write_text(toml.dumps(data), encoding="utf-8")
+    path.unlink()
+    if legacy_location == "target":
+        publish_plans(source, (plan(year=year, code="OTHER"),), {year})
+
+    merge_data(source, target)
+    output = next((target / "plans").glob("本科国际生_*.toml"))
+    merged = toml.load(output)
+    assert merged["info"]["plan_category"] == "本科国际生"
+    assert merged["courses"] == data["courses"]
+    assert not (target / "plans" / legacy.name).exists()
+    mapping = json.loads((target / "major_mapping.json").read_text(encoding="utf-8"))
+    assert mapping[year][code]["plan_ID"] == merged["info"]["plan_ID"]
+    assert mapping[year][code]["study_level"] == "undergrad"
+    before = {p.name: p.read_bytes() for p in target.rglob("*") if p.is_file()}
+    merge_data(source, target)
+    assert {p.name: p.read_bytes() for p in target.rglob("*") if p.is_file()} == before
+
+
 def test_profile_excludes_personal_fields_and_requires_identity():
     html = "<table><tr><th>姓名：</th><td>Private</td><th>年级：</th><td>2025</td><th>专业：</th><td>俄语</td><th>学院：</th><td>学院</td></tr></table>"
     assert parse_student_profile(html) == {
