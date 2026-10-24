@@ -118,6 +118,7 @@ def plan_to_dict(plan: NormalizedPlan) -> dict[str, object]:
         "major_name": plan.major_name,
         "school_name": plan.school_name,
         "plan_category": plan.category,
+        "study_level": "undergrad",
         "plan_ID": plan.plan_id,
     }
     courses: list[dict[str, object]] = []

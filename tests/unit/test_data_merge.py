@@ -36,6 +36,27 @@ def test_merge_fresh_crawl_preserves_remote_grades_and_other_plans(tmp_path):
     assert {p.name: p.read_bytes() for p in (target / "plans").glob("*.toml")} == before
 
 
+def test_merge_legacy_plans_adds_matching_study_levels_and_is_idempotent(tmp_path):
+    source, target = tmp_path / "local", tmp_path / "checkout"
+    publish_plans(source, (plan(),), {"2025"})
+    path = next((source / "plans").glob("*.toml"))
+    data = toml.load(path)
+    del data["info"]["study_level"]
+    data["courses"][0]["grade_details"] = [{"name": "Exam", "percent": "100%"}]
+    path.write_text(toml.dumps(data), encoding="utf-8")
+
+    merge_data(source, target)
+    output = next((target / "plans").glob("*.toml"))
+    merged = toml.load(output)
+    mapping = json.loads((target / "major_mapping.json").read_text(encoding="utf-8"))
+    assert merged["info"]["study_level"] == "undergrad"
+    assert mapping["2025"]["35158"]["study_level"] == "undergrad"
+    assert merged["courses"] == data["courses"]
+    before = output.read_bytes()
+    merge_data(source, target)
+    assert output.read_bytes() == before
+
+
 def test_unresolved_contribution_does_not_modify_checkout(tmp_path):
     source, target = tmp_path / "local", tmp_path / "checkout"
     publish_plans(source, (plan(name="Renamed"),), {"2025"})

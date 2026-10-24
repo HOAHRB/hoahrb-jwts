@@ -10,6 +10,11 @@
 - `grades_summary.json`：独立维护的资料仓库成绩汇总，不由个人 `grades` 抓取覆盖。
 - `course_introductions.json`：培养方案中课程的中英文简介。
 
+当前只采集本科层次数据。培养方案 `[info].study_level` 和 `major_mapping.json`
+条目的 `study_level` 均输出 `"undergrad"`，用于兼容上游培养层次筛选；该字段独立于
+`plan_category`，不改变辅修、第二学士学位等方案类别。`merge-data` 合入缺少该字段的
+旧方案时会补上 `"undergrad"`，并同步专业索引。
+
 它不会自动输入账号密码，也不会向教务系统提交业务数据。启动发现登录态失效且无法通过已有统一认证会话恢复时，会打开独立的浏览器窗口供维护者手动登录。正确的流程是：本地抓取 → 查看数据 diff → 人工确认后提交 `hoa-major-data`。
 
 ## Usage

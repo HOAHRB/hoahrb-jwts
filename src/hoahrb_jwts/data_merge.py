@@ -230,6 +230,7 @@ def _merge_data(source: Path, target: Path) -> MergeSummary:
         if name.casefold() in filenames:
             raise ValidationError(f"filename collision: {name}")
         filenames.add(name.casefold())
+        data["info"].setdefault("study_level", "undergrad")
         body = toml.dumps(data).encode()
         # Keep untouched files byte-for-byte, including comments and formatting.
         old = existing.get(key)
@@ -249,7 +250,10 @@ def _merge_data(source: Path, target: Path) -> MergeSummary:
         info = data["info"]
         entry = dict(mapping.get(key[0], {}).get(key[1], {}))
         entry.update(
-            name=info["major_name"], school_name=info["school_name"], plan_ID=info["plan_ID"]
+            name=info["major_name"],
+            school_name=info["school_name"],
+            plan_ID=info["plan_ID"],
+            study_level=info["study_level"],
         )
         entry.setdefault("majors", [])
         mapping.setdefault(key[0], {})[key[1]] = entry

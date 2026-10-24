@@ -78,6 +78,7 @@ def test_plan_to_dict_uses_compatibility_keys_and_omits_unknown_fields() -> None
     data = plan_to_dict(normalize_plan(discovered_plan()))
     assert data["info"]["plan_ID"] == "HIT-2025-35158"
     assert data["info"]["plan_category"] == "本"
+    assert data["info"]["study_level"] == "undergrad"
     course = data["courses"][0]
     assert "hours" not in course
     assert "track" not in course

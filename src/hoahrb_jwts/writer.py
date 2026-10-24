@@ -107,6 +107,7 @@ def _validate_plans(
             "name": plan.major_name,
             "plan_ID": plan.plan_id,
             "school_name": plan.school_name,
+            "study_level": "undergrad",
             "majors": [],
         }
 

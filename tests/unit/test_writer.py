@@ -98,6 +98,7 @@ def test_build_major_mapping_is_sorted_and_compatible() -> None:
         "name": "俄语",
         "plan_ID": "HIT-2025-35158",
         "school_name": "人文社科学部",
+        "study_level": "undergrad",
         "majors": [],
     }
 
